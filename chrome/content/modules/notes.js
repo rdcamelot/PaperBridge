@@ -2,6 +2,28 @@ PaperBridge = PaperBridge || {};
 
 PaperBridge.Notes = {
   frontmatterValidationCache: new Map(),
+  externalRefreshTimer: null,
+  externalRefreshIntervalMS: 8000,
+
+  start() {
+    if (this.externalRefreshTimer || typeof setInterval !== "function") {
+      return;
+    }
+    this.externalRefreshTimer = setInterval(() => this.refreshExternalFileState(), this.externalRefreshIntervalMS);
+  },
+
+  stop() {
+    if (this.externalRefreshTimer) {
+      clearInterval(this.externalRefreshTimer);
+      this.externalRefreshTimer = null;
+    }
+    this.frontmatterValidationCache.clear();
+  },
+
+  refreshExternalFileState() {
+    this.frontmatterValidationCache.clear();
+    PaperBridge.Util.refreshItemTreeColumns();
+  },
 
   isRegularItem(item) {
     return Boolean(item && typeof item.isRegularItem === "function" && item.isRegularItem());
@@ -30,11 +52,6 @@ PaperBridge.Notes = {
       attachments.push({ attachment, path, title: attachmentTitle });
     }
 
-    const titled = attachments.find(entry => entry.title === title);
-    if (titled) {
-      return titled.attachment;
-    }
-
     if (indexedComparable) {
       const indexed = attachments.find(entry =>
         PaperBridge.Util.normalizePathForCompare(entry.path) === indexedComparable
@@ -42,6 +59,11 @@ PaperBridge.Notes = {
       if (indexed) {
         return indexed.attachment;
       }
+    }
+
+    const titled = attachments.find(entry => entry.title === title);
+    if (titled) {
+      return titled.attachment;
     }
 
     return null;
@@ -146,7 +168,7 @@ PaperBridge.Notes = {
       throw new Error("PaperBridge can create notes only for regular Zotero items.");
     }
 
-    const collection = this.resolveCollection(options.collection) || this.pickPrimaryCollection(item);
+    const collection = this.collectionForItem(item, options.collection) || this.pickPrimaryCollection(item);
     const existingPath = this.getNotePath(item);
     if (existingPath && PaperBridge.Util.pathExistsSync(existingPath)) {
       await this.ensureExistingNoteLinked(item, existingPath, collection);
@@ -203,7 +225,6 @@ PaperBridge.Notes = {
   async ensurePaperBridgeFrontmatter(item, path, collection = null) {
     const content = await Zotero.File.getContentsAsync(path);
     let fields = this.parseFrontmatter(content) || {};
-    const originalFields = Object.assign({}, fields);
     this.assertFrontmatterBelongsToItem(fields, item);
     if (!this.validateFrontmatterContent(content, item).ok) {
       const updates = this.frontmatterRepairUpdatesForItem(item, content, collection);
@@ -211,7 +232,7 @@ PaperBridge.Notes = {
       fields = Object.assign({}, fields, updates);
       this.frontmatterValidationCache.delete(this.frontmatterCacheKey(path, item));
     }
-    await PaperBridge.Ranks.applyFrontmatterState(item, originalFields);
+    await PaperBridge.Ranks.applyFrontmatterState(item, fields);
     return fields;
   },
 
@@ -223,7 +244,7 @@ PaperBridge.Notes = {
       throw new Error("Select an existing Markdown note file.");
     }
     await this.assertRelinkTargetBelongsToItem(item, path);
-    await this.ensureExistingNoteLinked(item, path, collection || this.pickPrimaryCollection(item));
+    await this.ensureExistingNoteLinked(item, path, this.collectionForItem(item, collection) || this.pickPrimaryCollection(item));
     PaperBridge.Util.refreshItemTreeColumns();
     return path;
   },
@@ -378,6 +399,7 @@ PaperBridge.Notes = {
 
     const originalContent = await Zotero.File.getContentsAsync(currentPath);
     this.assertFrontmatterBelongsToItem(this.parseFrontmatter(originalContent), item);
+    this.assertItemBelongsToCollection(item, resolvedCollection);
     const nextContent = this.updateMarkdownFrontmatterContent(originalContent, {
       collection: resolvedCollection.name,
       primary_collection: resolvedCollection.name,
@@ -411,6 +433,17 @@ PaperBridge.Notes = {
     });
     PaperBridge.Util.refreshItemTreeColumns();
     return targetPath;
+  },
+
+  assertItemBelongsToCollection(item, collection) {
+    const collectionID = Number(collection?.id);
+    if (!Number.isInteger(collectionID) || collectionID <= 0) {
+      throw new Error("Select a regular Zotero collection before moving the note.");
+    }
+    if (!PaperBridge.Util.collectionIDsForItem(item).includes(collectionID)) {
+      const name = collection.name || collectionID;
+      throw new Error(`The selected Zotero item does not belong to "${name}". Add the item to that collection before moving its Markdown note.`);
+    }
   },
 
   async rollbackMovedNote(originalPath, movedPath, originalContent) {
@@ -457,9 +490,13 @@ PaperBridge.Notes = {
   async updateLinkedNoteRank(item, rank) {
     const path = this.getNotePath(item);
     if (!path || !PaperBridge.Util.pathExistsSync(path)) {
+      if (path) {
+        this.frontmatterValidationCache.delete(this.frontmatterCacheKey(path, item));
+      }
       return false;
     }
 
+    this.frontmatterValidationCache.delete(this.frontmatterCacheKey(path, item));
     const content = await Zotero.File.getContentsAsync(path);
     this.assertFrontmatterBelongsToItem(this.parseFrontmatter(content), item);
     const validation = this.validateFrontmatterContent(content, item);
@@ -703,6 +740,20 @@ PaperBridge.Notes = {
     return null;
   },
 
+  collectionForItem(item, collection) {
+    const resolved = this.resolveCollection(collection);
+    if (!resolved) {
+      return null;
+    }
+    const collectionID = Number(resolved.id);
+    if (!Number.isInteger(collectionID) || collectionID <= 0) {
+      return null;
+    }
+
+    const itemCollectionIDs = PaperBridge.Util.collectionIDsForItem(item);
+    return itemCollectionIDs.includes(collectionID) ? resolved : null;
+  },
+
   resolveCollection(collection) {
     if (!collection) {
       return null;
@@ -767,22 +818,6 @@ PaperBridge.Notes = {
       `created: ${this.yamlValue(frontmatter.created)}`,
       `updated: ${this.yamlValue(frontmatter.updated)}`,
       "---",
-      "",
-      "## 一句话总结",
-      "",
-      "## 研究问题",
-      "",
-      "## 核心方法",
-      "",
-      "## 关键结论",
-      "",
-      "## 可复用点",
-      "",
-      "## 局限性",
-      "",
-      "## 和我的研究的关系",
-      "",
-      "## 后续引用价值",
       ""
     ];
     return lines.join("\n");
@@ -794,13 +829,33 @@ PaperBridge.Notes = {
     }
     for (const attachmentID of item.getAttachments()) {
       const attachment = Zotero.Items.get(attachmentID);
-      const contentType = attachment?.attachmentContentType || "";
-      const path = this.getAttachmentPath(attachment);
-      if (contentType === "application/pdf" || path.toLowerCase().endsWith(".pdf")) {
+      if (this.isPDFAttachment(attachment)) {
         return attachment;
       }
     }
     return null;
+  },
+
+  isPDFAttachment(attachment) {
+    if (!attachment) {
+      return false;
+    }
+    const contentType = this.attachmentContentType(attachment).toLowerCase();
+    const path = this.getAttachmentPath(attachment).toLowerCase();
+    return contentType === "application/pdf" || path.endsWith(".pdf");
+  },
+
+  attachmentContentType(attachment) {
+    const direct = attachment?.attachmentContentType || attachment?.contentType || "";
+    if (direct) {
+      return String(direct);
+    }
+    try {
+      return String(attachment?.getField?.("contentType") || "");
+    }
+    catch (error) {
+      return "";
+    }
   },
 
   citekeyForItem(item) {

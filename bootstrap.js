@@ -63,34 +63,63 @@ async function paperbridgeRegisterPreferencePane(id, rootURI) {
   });
 }
 
+async function paperbridgeWaitForZoteroReady() {
+  const promises = [
+    Zotero.initializationPromise,
+    Zotero.unlockPromise,
+    Zotero.uiReadyPromise
+  ].filter(promise => promise && typeof promise.then === "function");
+
+  if (promises.length) {
+    await Promise.all(promises);
+  }
+}
+
+function paperbridgeLoadSubScript(rootURI, script) {
+  try {
+    Services.scriptloader.loadSubScript(rootURI + script.path, this);
+    return true;
+  }
+  catch (error) {
+    paperbridgeLog(`Could not load ${script.path}: ${error.message || error}`);
+    paperbridgeLogError(error);
+    if (script.required) {
+      throw error;
+    }
+    return false;
+  }
+}
+
 async function startup({ id, version, rootURI }) {
   paperbridgeLog(`Starting ${version}`);
+  await paperbridgeWaitForZoteroReady();
 
   const scripts = [
-    "chrome/content/modules/constants.js",
-    "chrome/content/modules/settings.js",
-    "chrome/content/modules/util.js",
-    "chrome/content/modules/index.js",
-    "chrome/content/modules/tray.js",
-    "chrome/content/modules/ranks.js",
-    "chrome/content/modules/notes.js",
-    "chrome/content/modules/bulk.js",
-    "chrome/content/modules/annotations.js",
-    "chrome/content/modules/scanner.js",
-    "chrome/content/modules/deleteQueue.js",
-    "chrome/content/modules/readingQueue.js",
-    "chrome/content/modules/citations.js",
-    "chrome/content/modules/itemPane.js",
-    "chrome/content/modules/columns.js",
-    "chrome/content/modules/menus.js",
-    "chrome/content/modules/shortcuts.js",
-    "chrome/content/modules/notifications.js",
-    "chrome/content/modules/ui.js",
-    "chrome/content/paperbridge.js"
+    { path: "chrome/content/modules/constants.js", required: true },
+    { path: "chrome/content/modules/settings.js", required: true },
+    { path: "chrome/content/modules/util.js", required: true },
+    { path: "chrome/content/modules/index.js", required: true },
+    { path: "chrome/content/modules/tray.js" },
+    { path: "chrome/content/modules/ranks.js" },
+    { path: "chrome/content/modules/notes.js" },
+    { path: "chrome/content/modules/bulk.js" },
+    { path: "chrome/content/modules/annotations.js" },
+    { path: "chrome/content/modules/scanner.js" },
+    { path: "chrome/content/modules/deleteQueue.js" },
+    { path: "chrome/content/modules/readingQueue.js" },
+    { path: "chrome/content/modules/citations.js" },
+    { path: "chrome/content/modules/diagnostics.js" },
+    { path: "chrome/content/modules/itemPane.js" },
+    { path: "chrome/content/modules/columns.js" },
+    { path: "chrome/content/modules/menus.js" },
+    { path: "chrome/content/modules/shortcuts.js" },
+    { path: "chrome/content/modules/notifications.js" },
+    { path: "chrome/content/modules/ui.js" },
+    { path: "chrome/content/paperbridge.js", required: true }
   ];
 
   for (const script of scripts) {
-    Services.scriptloader.loadSubScript(rootURI + script, this);
+    paperbridgeLoadSubScript.call(this, rootURI, script);
   }
 
   PaperBridge.init({ id, version, rootURI });
@@ -101,7 +130,8 @@ async function startup({ id, version, rootURI }) {
   await paperbridgeOptionalStartupStep("late window setup", () => PaperBridge.afterWindowsReady());
 }
 
-function onMainWindowLoad({ window }) {
+async function onMainWindowLoad({ window }) {
+  await paperbridgeWaitForZoteroReady();
   PaperBridge?.addToWindow(window);
 }
 

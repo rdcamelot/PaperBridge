@@ -68,10 +68,7 @@ PaperBridge.Annotations = {
     }
     return item.getAttachments()
       .map(id => Zotero.Items.get(id))
-      .filter(attachment => {
-        const path = PaperBridge.Notes.getAttachmentPath(attachment);
-        return attachment && (attachment.attachmentContentType === "application/pdf" || path.toLowerCase().endsWith(".pdf"));
-      });
+      .filter(attachment => PaperBridge.Notes.isPDFAttachment(attachment));
   },
 
   async annotationsForAttachment(attachment) {
@@ -114,18 +111,30 @@ PaperBridge.Annotations = {
   annotationBelongsToAttachment(annotation, attachment) {
     const parentID = annotation.parentID
       || annotation.parentItemID
+      || annotation.attachmentItemID
+      || annotation.attachmentID
       || annotation.parentItem?.id
+      || annotation.attachment?.id
       || this.annotationField(annotation, "parentID")
-      || this.annotationField(annotation, "parentItemID");
+      || this.annotationField(annotation, "parentItemID")
+      || this.annotationField(annotation, "attachmentItemID")
+      || this.annotationField(annotation, "attachmentID");
     if (Number.isFinite(Number(parentID)) && Number(parentID) === Number(attachment.id)) {
       return true;
     }
     const parentKey = annotation.parentKey
       || annotation.parentItemKey
+      || annotation.attachmentItemKey
+      || annotation.attachmentKey
       || annotation.parentItem?.key
+      || annotation.attachment?.key
+      || annotation.attachment?.itemKey
       || this.annotationField(annotation, "parentKey")
-      || this.annotationField(annotation, "parentItemKey");
-    return Boolean(parentKey && attachment.key && parentKey === attachment.key);
+      || this.annotationField(annotation, "parentItemKey")
+      || this.annotationField(annotation, "attachmentItemKey")
+      || this.annotationField(annotation, "attachmentKey");
+    const attachmentKey = attachment.key || attachment.itemKey || "";
+    return Boolean(parentKey && attachmentKey && parentKey === attachmentKey);
   },
 
   async resolveAnnotationItems(values) {
@@ -166,8 +175,8 @@ PaperBridge.Annotations = {
     const annotation = entry.annotation;
     return [
       String(entry.attachmentIndex ?? ""),
-      String(this.annotationField(annotation, "annotationSortIndex") || ""),
-      String(this.annotationField(annotation, "annotationPageLabel") || ""),
+      String(this.annotationValue(annotation, "annotationSortIndex", "sortIndex") || ""),
+      this.annotationPageSortKey(annotation),
       String(this.annotationKey(annotation) || annotation.id || "")
     ].join("|");
   },
@@ -203,19 +212,19 @@ PaperBridge.Annotations = {
   renderAnnotation(entry) {
     const { annotation } = entry;
     const parts = [];
-    const pageLabel = this.annotationField(annotation, "annotationPageLabel");
+    const pageLabel = this.annotationPageLabel(annotation);
     const page = pageLabel ? `p. ${pageLabel}` : "page ?";
-    const type = this.annotationField(annotation, "annotationType") || "annotation";
-    const color = this.annotationField(annotation, "annotationColor") || "";
+    const type = this.annotationValue(annotation, "annotationType", "type") || "annotation";
+    const color = this.annotationValue(annotation, "annotationColor", "color") || "";
     const link = this.annotationURI(entry);
     parts.push(`- **${this.escapeMarkdown(type)}** [${this.escapeMarkdown(page)}](${link})${color ? ` ${this.escapeMarkdown(color)}` : ""}`);
 
-    const text = String(this.annotationField(annotation, "annotationText") || "").trim();
+    const text = String(this.annotationValue(annotation, "annotationText", "annotatedText", "text") || "").trim();
     if (text) {
       parts.push(this.blockquote(text));
     }
 
-    const comment = String(this.annotationField(annotation, "annotationComment") || "").trim();
+    const comment = String(this.annotationValue(annotation, "annotationComment", "comment") || "").trim();
     if (comment) {
       parts.push(this.renderNestedText("Note", comment));
     }
@@ -273,7 +282,7 @@ PaperBridge.Annotations = {
   annotationURI(entry) {
     const { attachment, annotation } = entry;
     const params = [];
-    const pageLabel = this.annotationField(annotation, "annotationPageLabel");
+    const pageLabel = this.annotationPageLabel(annotation);
     const key = this.annotationKey(annotation);
     if (pageLabel) {
       params.push(`page=${encodeURIComponent(pageLabel)}`);
@@ -289,7 +298,76 @@ PaperBridge.Annotations = {
     return this.annotationField(annotation, "key")
       || this.annotationField(annotation, "itemKey")
       || this.annotationField(annotation, "annotationKey")
+      || this.annotationField(annotation, "id")
       || "";
+  },
+
+  annotationValue(annotation, ...names) {
+    for (const name of names) {
+      const value = this.annotationField(annotation, name);
+      if (value !== undefined && value !== null && value !== "") {
+        return value;
+      }
+    }
+    return "";
+  },
+
+  annotationPageLabel(annotation) {
+    const explicit = this.annotationValue(annotation, "annotationPageLabel", "pageLabel");
+    if (explicit) {
+      return explicit;
+    }
+
+    const page = this.annotationValue(annotation, "annotationPage", "page");
+    if (page) {
+      return page;
+    }
+
+    const pageIndex = this.annotationPageIndex(annotation);
+    return pageIndex === null ? "" : String(pageIndex + 1);
+  },
+
+  annotationPageSortKey(annotation) {
+    const pageIndex = this.annotationPageIndex(annotation);
+    if (pageIndex !== null) {
+      return String(pageIndex).padStart(8, "0");
+    }
+
+    const label = String(this.annotationPageLabel(annotation) || "");
+    const numeric = Number(label);
+    return Number.isFinite(numeric)
+      ? String(numeric).padStart(8, "0")
+      : label;
+  },
+
+  annotationPageIndex(annotation) {
+    const direct = this.annotationValue(annotation, "annotationPageIndex", "pageIndex");
+    if (direct !== "") {
+      const directNumber = Number(direct);
+      if (Number.isInteger(directNumber) && directNumber >= 0) {
+        return directNumber;
+      }
+    }
+
+    const position = this.annotationPosition(annotation);
+    const positionNumber = Number(position?.pageIndex);
+    return Number.isInteger(positionNumber) && positionNumber >= 0 ? positionNumber : null;
+  },
+
+  annotationPosition(annotation) {
+    const raw = this.annotationValue(annotation, "annotationPosition", "position");
+    if (!raw) {
+      return null;
+    }
+    if (typeof raw === "object") {
+      return raw;
+    }
+    try {
+      return JSON.parse(String(raw));
+    }
+    catch (error) {
+      return null;
+    }
   },
 
   annotationField(annotation, name) {

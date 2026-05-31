@@ -61,6 +61,9 @@ try {
     Write-Host "Checking XPI install diagnostic"
     Invoke-Checked "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/diagnose-xpi.ps1", "-SelfTest")
 
+    Write-Host "Checking development profile installer"
+    [void][scriptblock]::Create((Get-Content -LiteralPath "tools/dev-install-to-zotero-profile.ps1" -Raw -Encoding UTF8))
+
     Write-Host "Building XPI"
     Invoke-Checked "powershell" @("-ExecutionPolicy", "Bypass", "-File", "tools/build-xpi.ps1")
     $latestXPIPath = "dist/paperbridge-latest.xpi"

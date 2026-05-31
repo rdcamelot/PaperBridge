@@ -33,6 +33,7 @@ PaperBridge.Scanner = {
 
   async scanDirectory(root) {
     const result = {
+      root,
       files: 0,
       matched: 0,
       legacyMatched: 0,
@@ -70,6 +71,7 @@ PaperBridge.Scanner = {
       await this.relinkCandidate(candidate, result);
     }
     delete result.candidates;
+    delete result.root;
     PaperBridge.Util.refreshItemTreeColumns();
     return result;
   },
@@ -135,7 +137,11 @@ PaperBridge.Scanner = {
       if (!result.candidates) {
         result.candidates = [];
       }
-      result.candidates.push({ path, item });
+      result.candidates.push({
+        path,
+        item,
+        collection: this.collectionForMarkdownPath(path, item, result.root)
+      });
     }
     catch (error) {
       result.failed++;
@@ -145,7 +151,7 @@ PaperBridge.Scanner = {
 
   async relinkCandidate(candidate, result) {
     try {
-      await PaperBridge.Notes.relinkMarkdownNote(candidate.item, candidate.path);
+      await PaperBridge.Notes.relinkMarkdownNote(candidate.item, candidate.path, candidate.collection);
       result.relinked++;
     }
     catch (error) {
@@ -161,6 +167,58 @@ PaperBridge.Scanner = {
     const libraryID = PaperBridge.Util.libraryIDForItem(item);
     const itemKey = item.key || item.id || "";
     return libraryID && itemKey ? `${libraryID}:${itemKey}` : "";
+  },
+
+  collectionForMarkdownPath(path, item, root) {
+    const name = this.collectionNameForMarkdownPath(path, root);
+    return name ? this.collectionForItemByFolderName(item, name) : null;
+  },
+
+  collectionNameForMarkdownPath(path, root) {
+    const rootParts = this.pathParts(root);
+    const parentParts = this.pathParts(PaperBridge.Util.pathParent(path));
+    if (!rootParts.length || parentParts.length <= rootParts.length) {
+      return "";
+    }
+
+    for (let i = 0; i < rootParts.length; i++) {
+      if (rootParts[i].toLowerCase() !== parentParts[i].toLowerCase()) {
+        return "";
+      }
+    }
+    return parentParts[rootParts.length] || "";
+  },
+
+  pathParts(path) {
+    return String(path || "")
+      .replace(/\//g, "\\")
+      .split("\\")
+      .filter(Boolean);
+  },
+
+  collectionForItemByFolderName(item, folderName) {
+    const normalizedFolder = this.normalizeFolderName(folderName);
+    if (!normalizedFolder) {
+      return null;
+    }
+
+    for (const collectionID of PaperBridge.Util.collectionIDsForItem(item)) {
+      const collection = PaperBridge.Notes.resolveCollection(collectionID);
+      if (!collection?.name) {
+        continue;
+      }
+      if (
+        this.normalizeFolderName(collection.name) === normalizedFolder
+        || this.normalizeFolderName(PaperBridge.Util.sanitizePathSegment(collection.name)) === normalizedFolder
+      ) {
+        return collection;
+      }
+    }
+    return null;
+  },
+
+  normalizeFolderName(value) {
+    return String(value || "").trim().toLowerCase();
   },
 
   itemMatchForFrontmatter(fields) {

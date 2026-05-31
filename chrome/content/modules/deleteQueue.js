@@ -87,6 +87,7 @@ PaperBridge.DeleteQueue = {
 
   async cleanItem(item) {
     const path = await this.getSafeNotePathForCleanup(item);
+    const previousIndexEntry = PaperBridge.Index.get(item);
     const previousDeleted = item.deleted;
     let zoteroTrashed = false;
     item.deleted = true;
@@ -108,7 +109,10 @@ PaperBridge.DeleteQueue = {
     }
     catch (error) {
       if (zoteroTrashed) {
-        await this.restoreDeletedState(item, previousDeleted, error);
+        const restored = await this.restoreDeletedState(item, previousDeleted, error);
+        if (restored) {
+          this.restoreIndexEntry(item, previousIndexEntry);
+        }
       }
       throw error;
     }
@@ -139,11 +143,20 @@ PaperBridge.DeleteQueue = {
     try {
       item.deleted = deleted;
       await item.saveTx();
+      return true;
     }
     catch (restoreError) {
       PaperBridge.Util.safeLogError(restoreError);
       PaperBridge.Util.safeLogError(originalError);
+      return false;
     }
+  },
+
+  restoreIndexEntry(item, entry) {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    PaperBridge.Index.set(item, entry);
   },
 
   async sendFileToRecycleBin(path) {

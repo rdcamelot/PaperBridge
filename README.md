@@ -472,7 +472,7 @@ tools/build-xpi.ps1
 49. `清理 x` 过程中如果 Markdown 送入回收站失败，会尝试把已经移入 Zotero Trash 的条目恢复到原 `deleted` 状态，并保留内部索引，便于用户修复原因后重试。
 50. 新建 Markdown 文件写出成功后会先写入内部索引，再尝试创建 linked attachment；如果 attachment 创建失败，后续重试会复用同一个 Markdown 文件补绑定，而不是生成重复笔记文件。绑定已有 Markdown 时也会在 frontmatter 校验/修复成功后先保存索引，因此 attachment 创建失败后仍可从 `!` 状态继续补绑定。
 51. 当配置要求 linked attachment 但只有内部索引路径、缺少真实 Zotero linked attachment 时，笔记列会显示 `!` 而不是 `M`，点击后会走修复/补绑定流程，避免索引缓存掩盖绑定缺失。
-52. close-to-tray 会监听 Zotero/Mozilla 的应用退出通知；用户通过 Zotero 原生退出路径或系统退出触发真正退出时会放行关闭，不会被托盘拦截误认为普通关闭窗口。
+52. close-to-tray 同时监听窗口 `close` 和 Zotero/Mozilla 的 `quit-application-requested`；普通关闭会取消退出并隐藏到托盘，系统关机/重启和 PaperBridge 的显式退出命令会放行真正退出。
 53. `1/2/3/4/0/X/M` 快捷键只会在 Zotero 条目列表上下文触发，并忽略输入框、菜单、弹窗、note editor 等可编辑/交互区域，避免在搜索、改标题、PDF reader 或右侧面板操作时误改 rank 或打开笔记。
 54. 自动创建的 collection 归属判断会把 Notifier 和 Zotero API 返回的 collection ID 统一规范为正整数，避免字符串 ID 与数字 ID 混用时漏判触发 collection。
 55. 自动创建在缺元数据或创建/补 linked attachment 失败时都会进入同一个有限重试队列；如果上一轮已经写出 Markdown 但 attachment 失败，下一轮会复用该 Markdown 补绑定，不会生成重复文件。
@@ -502,18 +502,45 @@ tools/build-xpi.ps1
 79. 内部索引偏好解析只接受普通对象；如果 index 被误写成数组或损坏 JSON，会安全回退为空对象并在下一次写入时恢复为对象，避免把字符串键写进数组后被 `JSON.stringify([])` 静默丢弃。
 80. 阅读队列和引用清单这类生成文件的文件名也会按 `maxFilenameLength` 截断；即使 collection 名很长，首次生成路径也不会绕过普通笔记使用的 Windows 文件名长度保护。
 81. PDF annotation section 更新会处理缺失结束标记或孤立结束标记的残缺区块，避免重复导出块；导出的 open-pdf URI 会编码 PDF attachment key，多行 comment 会保持在 Markdown 列表结构内。
-82. Windows 托盘 helper 隐藏 Zotero 时只记录当前可见窗口，恢复时优先恢复这批窗口，避免把 Zotero/Mozilla 的隐藏内部窗口误显示；如果 helper 找不到可隐藏窗口，会向插件返回失败，让插件走最小化兜底。
+82. Windows 托盘 helper 隐藏 Zotero 时只记录当前可见窗口，恢复时优先恢复这批窗口，避免把 Zotero/Mozilla 的隐藏内部窗口误显示；如果 helper 找不到可隐藏窗口，会向插件返回失败，由插件提示错误并保持窗口可见。
 83. Tools 菜单 DOM fallback 在 `menu_ToolsPopup` 尚未就绪时不会把窗口标记为已处理，后续可以重试；创建菜单前会清掉残留的 PaperBridge 菜单，并兼容缺少 `createXULElement()` 的文档对象。
 84. manifest 的 Zotero 兼容范围改为 `strict_min_version: "6.999"` 和 `strict_max_version: "11.*"`，避免当前 Zotero 9.0.4 把过窄的上限判为不兼容而拒绝安装；最小版本写法与 Zotero 官方插件示例一致，最大版本写法与本机已安装且可登记的 Zotero 插件保持一致。
 85. 从 Markdown frontmatter 回写 rank/status tag 或补 unread 状态时，如果 Zotero `saveTx()` 失败，会恢复原 PaperBridge rank/status tags，并且 rank 索引只在保存成功后写入，避免保存失败造成内存 tag 和索引污染。
 86. `清理 x` 搜索返回的 item ID 会规范为正整数并去重，library 清理范围也会去重；Markdown 送入回收站后会再次确认原路径不存在，如果文件仍在原处，会恢复 Zotero `deleted` 状态并保留索引。
 87. 插件 ID 改为更标准的邮箱式 `paperbridge@example.com`，避免非标准本地域名式 ID 在 Zotero/Mozilla Add-on Manager 安装阶段被泛化报为“不兼容”；manifest 同时补充 author/icons 元数据，并把版本提升到 `0.1.1` 生成新文件名，排除同路径同版本失败安装缓存干扰。
 88. 启动阶段改为核心脚本加载失败才中断安装，偏好页、条目列、item pane、通知、Tools 菜单和托盘 hook 的注册失败都会被记录但不会让 Add-on Manager 回滚安装；这样可以避免 Zotero 把启动期 API 差异或单个功能异常泛化显示为“不兼容”，并把版本提升到 `0.1.2` 生成新的安装包。
-89. 根据 Zotero 9.0.4 内置 `Extension.sys.mjs` 的实际校验，`applications.zotero.update_url` 缺失会让 manifest 被标记为 invalid，但安装 UI 仍泛化显示为“不兼容”；manifest 已补充 HTTPS `update_url` 并提升到 `0.1.3`。
+89. 安装兼容、UI/列、托盘等排查过程移至 `docs/troubleshooting.md`，README 保留项目目标、功能设计和使用说明。
+90. 托盘右键菜单精简为 `Open Zotero` 和 `Quit Zotero`；`Quit Zotero` 会通过一次性退出请求让插件放行正常退出，而不是只退出 tray helper。
+91. 新建 Markdown 默认只写 PaperBridge frontmatter，不再插入固定阅读提纲标题。
+92. 外部删除或修改 Markdown 后，插件会定期刷新条目列状态，避免已删除文件长期显示为 `M`。
+93. 自动创建笔记时，如果 collection-item 通知没有给出可靠 collection ID，会优先使用当前选中的 collection，只要该条目确实属于该 collection，避免误落到同级的旧目录。
+94. Windows 托盘 helper 不再只按启动时传入的单个 PID 查找窗口，而会扫描所有 `zotero.exe` 进程并优先匹配 Zotero 可执行文件路径；helper 失败时也不会把 Zotero 自动最小化到任务栏，避免关闭拦截失败造成“偶尔自己最小化”。
+95. 启动和 item 删除/进 Trash 通知会清理已经指向 deleted/missing Zotero item 的 PaperBridge 索引，避免旧索引让用户误以为论文仍在当前分类；手动 Zotero 删除不会自动删除 Markdown，真正同步回收 Markdown 仍通过显式的 `x` + `清理 x` 流程完成。
+96. 右侧 PaperBridge item pane 使用 Zotero 7 官方 section API 的 `body.ownerDocument` fallback 渲染，避免 Zotero 未传 `doc` 时内容区空白；面板增加 note/rank/status 状态条、citekey、主分类、文件存在性、linked attachment、Zotero key，并提供导出注释和刷新按钮。
+97. PaperBridge 图标改为居中的文档+桥形线稿，减少侧边栏 20px 图标看起来被截断或过于拥挤的问题。
+98. `PaperBridge: 运行诊断` 会输出当前插件版本、Zotero 版本、Markdown 根目录、自动创建/linked attachment 设置、索引 stale 数、托盘 helper 连通性，以及选中条目的 key、deleted 状态、collection、note path、文件存在性、frontmatter、rank/status 和 citekey，便于在真实 Zotero UI 中定位“已删除但索引残留”“文件缺失”“helper 未启动”等问题；报告会同时复制到剪贴板，便于直接粘贴排查。
+99. 启动阶段把 `constants/settings/util/index/paperbridge` 视为核心模块，其他功能模块单独隔离加载；单个功能模块脚本加载失败会记录错误但不阻断插件初始化、偏好页、窗口 hook 和其他可用功能，符合 Zotero 7 bootstrapped 插件需要在生命周期中尽量清理/降级的原则。
+100. `tools\verify-zotero-install.ps1` 会同时读取 Zotero profile 的 `extensions.json`、profile 中实际安装的 XPI manifest 和 SHA256，并与当前 `dist\paperbridge-latest.xpi` 对比；如果 Zotero 仍在运行旧包或同版本旧构建，会直接提示需要重新安装哪个 XPI。
+101. 运行期错误记录改为非阻塞；即使 Zotero 的日志接口或某个可选功能模块异常，右侧 PaperBridge 面板按钮也会恢复可点击状态并显示错误，`PaperBridge: 运行诊断` 也会尽量输出剩余模块状态，而不是因单个模块缺失整体失败。
+102. 右侧 PaperBridge item pane 本身也支持降级渲染；如果 Notes、Ranks、Index 或 Annotations 模块加载失败，面板仍会打开并显示 `Unavailable`，相关按钮会禁用并提示重启/重装，而不是让 Zotero 的 item pane 回调抛错。
+103. Tools 菜单命令会声明并检查所需模块；DOM fallback 菜单会把不可用功能置灰，MenuManager 路径下点击不可用功能也会显示明确的模块缺失提示，而不是内部 `TypeError`。
+104. 基于 Zotero 官方 `MenuManager` 的 `onShowing` / `context.setEnabled()` 机制，官方菜单注册路径也会在菜单打开时动态禁用不可用功能；DOM fallback 和 MenuManager 两条路径的降级行为保持一致。
+105. Tools 菜单可用性改为动态计算；如果模块在运行期恢复或缺失，MenuManager 的 `onShowing` 和 DOM fallback 的 `popupshowing` 都会重新检查，不依赖注册时快照。
+106. 同一条目存在多个同名 Markdown linked attachment 时，优先使用内部索引记录的 note path 匹配附件，再退回附件标题匹配，避免历史重复附件导致打开或更新旧笔记。
+107. 重连已有 Markdown 且文件缺少 PaperBridge frontmatter 时，修复写入后的 `rank/status` 会立刻回写到 Zotero tag；避免 Markdown 已补 `status: unread` 但 Zotero 条目仍没有对应状态标签。
+108. 扫描 Markdown root 重连旧笔记时，会优先从 root 下第一层目录推断 collection，并且只在条目确实属于同名 collection 时使用；避免旧笔记位于 `Inbox` 目录却因为 Zotero 当前选中或条目第一个分类不同而被补成错误的 `primary_collection`。
+109. `清理 x` 在回收 Markdown 失败并回滚 Zotero Trash 状态时，会恢复清理前的 PaperBridge 索引快照；避免真实 Zotero Notifier 已经因 item deleted 事件清掉索引，回滚后条目和 Markdown 都存在但绑定丢失。
+110. `移动笔记到当前分类` 会先确认 Zotero 条目确实属于目标 collection，再移动 Markdown 文件；如果用户误选了无关分类，会拒绝移动并保持文件、frontmatter 和内部索引不变。
+111. 手动/批量创建或重连笔记时，显式传入的 collection 也必须是条目所属 collection 才会用于目录和 frontmatter；否则回退到条目自己的主分类，避免当前 Zotero 左侧误选分类导致新建笔记落到无关目录。
+112. Zotero rank 写入后同步 Markdown frontmatter 前会先清除该笔记的 frontmatter 校验缓存；如果 Markdown 已被外部改坏或指向其他 Zotero item，条目列会在刷新后立刻显示 `!`，不会继续沿用旧缓存显示 `M`。
+113. PDF annotation 导出兼容更多注释字段形态：除 Zotero item 字段 `annotationText/annotationComment/annotationPageLabel` 外，也会读取 `annotatedText/comment/pageLabel/type/color`，并在只有 `annotationPosition.pageIndex` 时生成页码和 `zotero://open-pdf` 链接。
+114. PDF annotation 搜索回退会识别更多父附件字段别名，包括 `attachmentItemID`、`attachmentID`、`attachmentItemKey`、`attachmentKey` 以及嵌套的 `annotation.attachment.key/itemKey`，避免真实 annotation 对象字段名不同导致漏导出。
+115. PDF 附件识别改为复用统一 helper，除 `attachmentContentType` 和 `.pdf` 路径外，也会读取 `contentType` 属性和 `getField("contentType")`；注释导出和 frontmatter `pdf` URI 选择使用同一判定，避免只通过 getter 暴露 MIME 的 PDF 被漏掉。
+116. 右侧 PaperBridge 入口改用只有 `.tooltiptext` 的 sidenav l10n，避免 Zotero 底部栏把 `PaperBridge` 文本渲染进 20px 图标按钮；图标改为 note-link 线稿，面板增加下一步、PDF 概况和更新时间；Windows tray helper 在启用 close-to-tray 时会延迟预热，减少第一次关闭时才启动 PowerShell helper 的等待和窗口闪烁。
 
 尚未完成：
 
-1. 在真实 Zotero UI 中完整试运行。
+1. 在真实 Zotero UI 中完整试运行各业务功能。
 2. PDF 注释导出的真实 Zotero reader 注释兼容性实机验证。
 
 ## 本地打包
@@ -527,7 +554,7 @@ powershell -ExecutionPolicy Bypass -File tools\build-xpi.ps1
 生成：
 
 ```text
-dist\paperbridge-0.1.3.xpi
+dist\paperbridge-0.1.28.xpi
 dist\paperbridge-latest.xpi
 ```
 
@@ -546,14 +573,15 @@ powershell -ExecutionPolicy Bypass -File tools\validate.ps1
 1. `manifest.json` 可解析，且 Zotero 插件 ID 正确。
 2. `preferences.xhtml` 可作为 XML 解析。
 3. 所有 JavaScript 文件通过 `node --check`。
-4. `tools/offline-tests.js` 用 stub 的 Zotero 环境验证关键纯逻辑和静态内容：关键中文 UI/模板文案 UTF-8 完整性、偏好页中文搜索关键词无 mojibake、manifest 的 Zotero 7+/9 兼容字段、根目录 `prefs.js` 默认偏好、偏好解析、collection 自动创建过滤、collection ID 类型规范化、自动创建通知 itemID/collectionID 正整数校验和 collectionID 保留、手动创建笔记时选中 collection 的字符串/数字 ID 兼容、当前分类批量创建对 item 对象/ID/Promise 子条目返回的兼容、阅读队列和引用清单对异步 collection item ID 的兼容、生成文件长 collection 名截断、library-aware 内部索引、旧索引兼容、坏 JSON/数组索引恢复、Zotero URI library/item key 解析、无法解析的 URI library 检测和 frontmatter mismatch 拒绝保护、错误 library/item URI 的笔记状态 `!` 检测、group library select/open-pdf URI 生成、自动创建 attachment 失败后的有限重试和文件复用、文件名清理、Windows 保留名规避和同名冲突后缀长度控制、Zotero 8/9 原生 citationKey、Better BibTeX citekey 开关和返回值形态、fallback citekey pattern、Markdown 附件匹配、已有 linked attachment 更新失败时字段回滚、编辑器启动失败时系统默认打开回退、frontmatter 更新、frontmatter 有效性判定、保守修复字段生成、Zotero rank 同步到 Markdown、rank 保存失败内存 tag 回滚、frontmatter rank/status 保存失败回滚、错误归属 Markdown 在修复/移动/rank 同步前拒绝改写、Markdown rank/status 回写到 Zotero tag、item pane 摘要/行数据、item pane 按钮执行后的列刷新/重渲染/防重复点击、Tools 菜单 `MenuManager` 注册与 DOM 回退、DOM fallback 菜单延迟重试/残留清理/元素创建兼容、bootstrap 和运行时 stop 清理韧性、窗口 UI 资源随 stop 清理、条目列表快捷键上下文过滤和交互区误触发保护、托盘本地命令超时、托盘 helper socket 读写超时、未知命令拒绝、只恢复已隐藏窗口、无窗口时返回失败兜底、托盘 close 事件拦截和原生退出放行、阅读队列 Markdown 渲染和安全输出路径、collection 引用清单 Markdown 渲染和安全输出路径、PDF annotation section 渲染/替换、残缺 annotation 标记修复、attachment key 编码、多行 comment 渲染、annotation 属性/getField 字段读取和 tag 形态兼容、annotation child item ID 解析后过滤、新建或绑定已有 Markdown 后 attachment 失败的重试复用、缺 linked attachment 时显示 `!`、已有 Markdown 自动补 linked attachment、已有 Markdown 手动重连、已有 Markdown 不同 `zotero_key` 的拒绝保护、内部索引误指向其他条目笔记时的拒绝保护、已有 Markdown frontmatter 修复失败不 attach/index、Markdown root 扫描重连、含 `zotero_key` 的跨 library 同 key 歧义保护、Zotero URI 消歧、坏 URI 不回退搜索和 scanner 字符串 item ID 解析、无 `zotero_key` 旧笔记保守匹配和 fuzzy title 匹配、重复 Markdown/重复 Zotero 匹配跳过、`清理 x` libraryID 正整数校验和无选中库回退、`清理 x` 搜索 item ID/清理 library 去重、`清理 x` 单项失败计数、Markdown 回收失败或回收后仍存在时的 Zotero deleted 状态回滚，以及清理前 frontmatter 归属校验拒绝误回收其他条目的 Markdown。
+4. `tools/offline-tests.js` 用 stub 的 Zotero 环境验证关键纯逻辑和静态内容：关键中文 UI/模板文案 UTF-8 完整性、偏好页中文搜索关键词无 mojibake、manifest 的 Zotero 7+/9 兼容字段、根目录 `prefs.js` 默认偏好、偏好解析、collection 自动创建过滤、collection ID 类型规范化、自动创建通知 itemID/collectionID 正整数校验和 collectionID 保留、手动创建笔记时选中 collection 的字符串/数字 ID 兼容、当前分类批量创建对 item 对象/ID/Promise 子条目返回的兼容、阅读队列和引用清单对异步 collection item ID 的兼容、生成文件长 collection 名截断、library-aware 内部索引、旧索引兼容、坏 JSON/数组索引恢复、Zotero URI library/item key 解析、无法解析的 URI library 检测和 frontmatter mismatch 拒绝保护、错误 library/item URI 的笔记状态 `!` 检测、group library select/open-pdf URI 生成、自动创建 attachment 失败后的有限重试和文件复用、文件名清理、Windows 保留名规避和同名冲突后缀长度控制、Zotero 8/9 原生 citationKey、Better BibTeX citekey 开关和返回值形态、fallback citekey pattern、Markdown 附件匹配、已有 linked attachment 更新失败时字段回滚、编辑器启动失败时系统默认打开回退、frontmatter 更新、frontmatter 有效性判定、保守修复字段生成、Zotero rank 同步到 Markdown、rank 保存失败内存 tag 回滚、frontmatter rank/status 保存失败回滚、错误归属 Markdown 在修复/移动/rank 同步前拒绝改写、Markdown rank/status 回写到 Zotero tag、item pane 摘要/行数据、item pane 按钮执行后的列刷新/重渲染/防重复点击、Tools 菜单 `MenuManager` 注册与 DOM 回退、DOM fallback 菜单延迟重试/残留清理/元素创建兼容、bootstrap 和运行时 stop 清理韧性、窗口 UI 资源随 stop 清理、条目列表快捷键上下文过滤和交互区误触发保护、托盘本地命令超时、托盘 helper socket 读写超时、未知命令拒绝、只恢复已隐藏窗口、无窗口时返回失败兜底、托盘 close 事件拦截、`quit-application-requested` 兜底拦截和系统退出放行、阅读队列 Markdown 渲染和安全输出路径、collection 引用清单 Markdown 渲染和安全输出路径、PDF annotation section 渲染/替换、残缺 annotation 标记修复、attachment key 编码、多行 comment 渲染、annotation 属性/getField 字段读取和 tag 形态兼容、annotation child item ID 解析后过滤、新建或绑定已有 Markdown 后 attachment 失败的重试复用、缺 linked attachment 时显示 `!`、已有 Markdown 自动补 linked attachment、已有 Markdown 手动重连、已有 Markdown 不同 `zotero_key` 的拒绝保护、内部索引误指向其他条目笔记时的拒绝保护、已有 Markdown frontmatter 修复失败不 attach/index、Markdown root 扫描重连、含 `zotero_key` 的跨 library 同 key 歧义保护、Zotero URI 消歧、坏 URI 不回退搜索和 scanner 字符串 item ID 解析、无 `zotero_key` 旧笔记保守匹配和 fuzzy title 匹配、重复 Markdown/重复 Zotero 匹配跳过、`清理 x` libraryID 正整数校验和无选中库回退、`清理 x` 搜索 item ID/清理 library 去重、`清理 x` 单项失败计数、Markdown 回收失败或回收后仍存在时的 Zotero deleted 状态回滚，以及清理前 frontmatter 归属校验拒绝误回收其他条目的 Markdown。
 5. `bootstrap.js` 引用的所有脚本都存在。
 6. Windows tray helper 通过 `-SelfTest` 自检。
 7. 能成功生成与 manifest version 对应的 `dist\paperbridge-<version>.xpi`。
 8. XPI 中包含插件启动、偏好页、核心模块和 tray helper 文件。
 9. `tools/diagnose-xpi.ps1` 会在安装前检查 XPI 根目录 manifest、manifest 字段、bootstrap、图标路径、当前 Zotero 版本兼容范围、默认 profile 注册状态，以及是否误选了旧版本安装包。
+10. `tools/verify-zotero-install.ps1` 的 `-SelfTest` 会构造临时 profile 和 XPI，验证启用/禁用/缺失/旧包 hash 不一致等安装状态判断。
 
-当前验证仍属于离线验证。完整完成前还需要把 `.xpi` 安装到 Zotero，实际检查：
+离线验证和 Zotero 插件登记验证已经通过。完整完成前还需要在真实 Zotero UI 中实际检查：
 
 1. 偏好设置页能打开并保存配置。
 2. Zotero 列表中出现 `笔记` 和 `等级` 两列。
@@ -564,7 +592,7 @@ powershell -ExecutionPolicy Bypass -File tools\validate.ps1
 7. 新论文加入 collection 后能自动创建 Markdown。
 8. `PaperBridge: 清理 x` 能把 Zotero 条目移入 Zotero Trash，并把 Markdown 文件直接送入 Windows 回收站，不创建 `.trash`。
    单个条目失败时，应继续处理后续条目并在结果中统计失败数。
-9. 点击 Zotero 主窗口 `X` 后窗口进入托盘，点击托盘图标后恢复；通过 Zotero 原生退出路径或系统退出时应真正退出，不应被 close-to-tray 拦截。
+9. 点击 Zotero 主窗口 `X` 后窗口进入托盘，点击托盘图标后恢复；通过 `PaperBridge: 退出 Zotero` 或系统退出时应真正退出，不应被 close-to-tray 拦截。
 10. `PaperBridge: 移动笔记到当前分类` 能移动文件、更新 attachment 路径，并正确改写 frontmatter。
 11. `!` 状态能识别文件丢失和 frontmatter 异常；frontmatter 异常能修复，文件丢失时能选择已有 Markdown 重新绑定或重新生成。
 12. 设置等级后 Markdown frontmatter 中的 `rank` 能同步更新。
@@ -581,8 +609,17 @@ powershell -ExecutionPolicy Bypass -File tools\validate.ps1
 powershell -ExecutionPolicy Bypass -File tools\verify-zotero-install.ps1
 ```
 
-脚本会检查 `extensions.json` 中是否存在 `paperbridge@example.com`、版本是否匹配、插件是否启用，以及登记的 XPI 路径是否存在。它只读取 profile，不会改写 Zotero 配置。
+脚本会检查 `extensions.json` 中是否存在 `paperbridge@example.com`、版本是否匹配、插件是否启用、登记的 XPI 路径是否存在，并读取 profile 中实际安装的 XPI manifest 和 SHA256，与当前 `dist\paperbridge-latest.xpi` 对比。它只读取 profile，不会改写 Zotero 配置。
 如果只是想确认 Zotero 已经登记该插件、但允许它暂时处于禁用或待重启状态，可以加 `-AllowDisabled`。
+
+当前最新运行期修复包为 `0.1.28`；如果 profile 中仍显示 `0.1.27` 或更早版本，或者脚本提示 profile XPI 的 SHA256 与当前 `dist\paperbridge-latest.xpi` 不一致，需要重新安装 `dist\paperbridge-latest.xpi` 并重启 Zotero。
+开发调试时，如果 PaperBridge 已经通过 Zotero UI 登记过，但拖拽更新后 profile 仍停在旧 XPI，可以在关闭 Zotero 后运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\dev-install-to-zotero-profile.ps1
+```
+
+该脚本会先备份 profile 中的 PaperBridge XPI、`extensions.json` 和扩展启动缓存，再复制当前 `dist\paperbridge-latest.xpi` 并同步登记信息；如果要让脚本请求 Zotero 正常退出，可加 `-CloseZotero`。它只适合本地开发期修复“已登记但仍运行旧包”的情况，首次安装仍建议走 Zotero UI。
 
 安装前也可以运行：
 
@@ -590,8 +627,10 @@ powershell -ExecutionPolicy Bypass -File tools\verify-zotero-install.ps1
 powershell -ExecutionPolicy Bypass -File tools\diagnose-xpi.ps1
 ```
 
-它不会修改 Zotero，只用于确认当前 `dist\paperbridge-0.1.3.xpi` / `dist\paperbridge-latest.xpi` 是否是可被 Zotero 9.0.4 接受的结构和兼容范围，并提示 profile 中是否已有登记记录。
+它不会修改 Zotero，只用于确认当前 `dist\paperbridge-0.1.28.xpi` / `dist\paperbridge-latest.xpi` 是否是可被 Zotero 9.0.4 接受的结构和兼容范围，并提示 profile 中是否已有登记记录。
 验证脚本本身也纳入本地验证的 `-SelfTest`，避免 profile 解析和状态判断逻辑退化。
+
+安装失败、列不可见、托盘关闭等问题的排查和修复记录见 `docs/troubleshooting.md`。
 
 插件安装建议使用 Zotero UI：
 
@@ -600,7 +639,7 @@ powershell -ExecutionPolicy Bypass -File tools\diagnose-xpi.ps1
 3. 把 `dist\paperbridge-latest.xpi` 拖到 Plugins 窗口；如果当前界面提供齿轮菜单，也可以选择 `Install Add-on From File...` 后选中该 `.xpi`。
 4. 确认安装并按提示重启 Zotero。
 
-直接把 `.xpi` 复制到 profile 的 `extensions` 目录不一定会被 Zotero 登记为已安装插件；本机验证时该方式未触发 `extensions.json` 注册，因此不作为推荐安装路径。
+直接把 `.xpi` 复制到 profile 的 `extensions` 目录不一定会被 Zotero 登记为已安装插件；本机验证时该方式未触发 `extensions.json` 注册，因此不作为首次安装路径。开发期需要修复旧登记时，应使用 `tools\dev-install-to-zotero-profile.ps1` 让 XPI 和 `extensions.json` 一起更新。
 
 如果 Zotero 仍然对主插件显示“不兼容”，可以先安装 `dist\paperbridge-diagnostic-0.0.1.xpi`。该包只包含最小 manifest 和空 bootstrap：如果它能安装，说明 Zotero 接受本地 XPI，问题应继续定位 PaperBridge 启动阶段；如果它也不能安装，优先检查 Zotero 版本、安装入口、profile 或 Add-on Manager 设置。
 

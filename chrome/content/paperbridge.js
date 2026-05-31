@@ -15,9 +15,11 @@ PaperBridge = Object.assign(PaperBridge || {}, {
   },
 
   async start() {
+    await this.startFeature("stale index cleanup", () => this.Index.pruneStaleEntries());
     await this.startFeature("tray observer", () => this.Tray.start());
     await this.startFeature("item tree columns", () => this.Columns.register());
     await this.startFeature("item pane", () => this.ItemPane.register());
+    await this.startFeature("note file monitor", () => this.Notes.start());
     await this.startFeature("notifications", () => this.Notifications.start());
   },
 
@@ -27,6 +29,7 @@ PaperBridge = Object.assign(PaperBridge || {}, {
 
   async stop() {
     await this.runCleanupStep("notifications", () => this.Notifications.stop());
+    await this.runCleanupStep("note file monitor", () => this.Notes.stop());
     await this.runCleanupStep("tray", () => this.Tray.stop());
     await this.runCleanupStep("menus unregister", () => this.Menus.unregister());
     await this.runCleanupStep("menus remove", () => this.Menus.removeFromAllWindows());

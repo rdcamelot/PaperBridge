@@ -64,6 +64,133 @@ PaperBridge.Index = {
     this.save(all);
   },
 
+  removeByItemID(itemID) {
+    const numericItemID = Number(itemID);
+    if (!Number.isInteger(numericItemID) || numericItemID <= 0) {
+      return false;
+    }
+
+    const all = this.all();
+    let changed = false;
+    for (const [key, entry] of Object.entries(all)) {
+      if (Number(entry?.item_id || entry?.itemID || 0) === numericItemID) {
+        delete all[key];
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.save(all);
+    }
+    return changed;
+  },
+
+  removeByLibraryAndKey(libraryID, itemKey) {
+    const key = String(itemKey || "").trim();
+    const numericLibraryID = PaperBridge.Util.isValidLibraryID(libraryID) ? Number(libraryID) : null;
+    if (!key) {
+      return false;
+    }
+
+    const all = this.all();
+    let changed = false;
+    for (const indexKey of [numericLibraryID ? `${numericLibraryID}:${key}` : "", key].filter(Boolean)) {
+      const entry = all[indexKey];
+      if (!entry || entry.zotero_key && entry.zotero_key !== key) {
+        continue;
+      }
+      if (numericLibraryID && PaperBridge.Util.isValidLibraryID(entry.library_id) && Number(entry.library_id) !== numericLibraryID) {
+        continue;
+      }
+      delete all[indexKey];
+      changed = true;
+    }
+    if (changed) {
+      this.save(all);
+    }
+    return changed;
+  },
+
+  pruneStaleEntries() {
+    const all = this.all();
+    let checked = 0;
+    let removed = 0;
+
+    for (const [indexKey, entry] of Object.entries(all)) {
+      checked++;
+      if (!this.shouldKeepEntry(indexKey, entry)) {
+        delete all[indexKey];
+        removed++;
+      }
+    }
+
+    if (removed) {
+      this.save(all);
+      PaperBridge.Util.refreshItemTreeColumns();
+    }
+    return { checked, removed };
+  },
+
+  shouldKeepEntry(indexKey, entry) {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const resolved = this.resolveEntryItem(indexKey, entry);
+    if (!resolved.attempted) {
+      return true;
+    }
+    return Boolean(resolved.item && !resolved.item.deleted);
+  },
+
+  resolveEntryItem(indexKey, entry) {
+    const itemKey = this.entryItemKey(indexKey, entry);
+    const libraryID = this.entryLibraryID(indexKey, entry);
+    let attempted = false;
+
+    if (itemKey && PaperBridge.Util.isValidLibraryID(libraryID) && typeof Zotero.Items?.getByLibraryAndKey === "function") {
+      attempted = true;
+      const item = Zotero.Items.getByLibraryAndKey(Number(libraryID), itemKey);
+      if (item) {
+        return { attempted, item };
+      }
+    }
+
+    const itemID = Number(entry.item_id || entry.itemID || 0);
+    if (Number.isInteger(itemID) && itemID > 0 && typeof Zotero.Items?.get === "function") {
+      attempted = true;
+      const item = Zotero.Items.get(itemID);
+      if (!item) {
+        return { attempted, item: null };
+      }
+      if (itemKey && item.key && item.key !== itemKey) {
+        return { attempted, item: null };
+      }
+      if (PaperBridge.Util.isValidLibraryID(libraryID) && PaperBridge.Util.libraryIDForItem(item) !== Number(libraryID)) {
+        return { attempted, item: null };
+      }
+      return { attempted, item };
+    }
+
+    return { attempted, item: null };
+  },
+
+  entryItemKey(indexKey, entry) {
+    const explicit = String(entry?.zotero_key || entry?.key || "").trim();
+    if (explicit) {
+      return explicit;
+    }
+    const parts = String(indexKey || "").split(":");
+    return String(parts[parts.length - 1] || "").trim();
+  },
+
+  entryLibraryID(indexKey, entry) {
+    const explicit = Number(entry?.library_id || entry?.libraryID || 0);
+    if (PaperBridge.Util.isValidLibraryID(explicit)) {
+      return explicit;
+    }
+    const match = String(indexKey || "").match(/^(\d+):/);
+    return match ? Number(match[1]) : null;
+  },
+
   itemIndexKey(item) {
     const key = this.legacyItemKey(item);
     if (!key) {

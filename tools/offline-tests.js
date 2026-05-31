@@ -39,6 +39,8 @@ const context = {
   console,
   setTimeout,
   clearTimeout,
+  setInterval,
+  clearInterval,
   AbortController,
   PaperBridge: {},
   Zotero: {
@@ -82,6 +84,10 @@ const context = {
           lastModifiedTime: 123,
           launch() {
             launchedFiles.push(filePath);
+          },
+          remove() {
+            pathTypes.delete(filePath);
+            fileContentsByPath.delete(filePath);
           }
         };
       },
@@ -109,7 +115,15 @@ const context = {
         return (ids || []).map(id => attachmentByID.get(id) || zoteroItemsByID.get(id)).filter(Boolean);
       },
       getByLibraryAndKey(libraryID, key) {
-        return Number(libraryID) === 1 && key === "ABCD1234" ? context.scanMatchItem : null;
+        if (Number(libraryID) === 1 && key === "ABCD1234" && context.scanMatchItem) {
+          return context.scanMatchItem;
+        }
+        for (const item of zoteroItemsByID.values()) {
+          if (Number(item?.libraryID || context.Zotero.Libraries.userLibraryID) === Number(libraryID) && item?.key === key) {
+            return item;
+          }
+        }
+        return null;
       }
     },
     Search: function () {
@@ -139,6 +153,21 @@ const context = {
       generateUUID() {
         return "{00000000-0000-4000-8000-000000000000}";
       }
+    },
+    dirsvc: {
+      get(name) {
+        if (name === "TmpD") {
+          return { path: "D:\\Temp" };
+        }
+        if (name === "XREExeF") {
+          return { path: "C:\\Zotero\\zotero.exe" };
+        }
+        throw new Error(`unknown dirsvc key: ${name}`);
+      }
+    },
+    appinfo: {
+      processID: 4242,
+      OS: "WINNT"
     }
   },
   PathUtils: {
@@ -196,6 +225,7 @@ for (const file of [
   "chrome/content/modules/deleteQueue.js",
   "chrome/content/modules/readingQueue.js",
   "chrome/content/modules/citations.js",
+  "chrome/content/modules/diagnostics.js",
   "chrome/content/modules/scanner.js",
   "chrome/content/modules/itemPane.js",
   "chrome/content/modules/columns.js",
@@ -285,7 +315,7 @@ function createFakeMenuWindow() {
   };
 }
 
-async function runBootstrapLifecycleTests({ failStart = false, failUnregister = false } = {}) {
+async function runBootstrapLifecycleTests({ failStart = false, failUnregister = false, failOptionalLoad = false } = {}) {
   const calls = [];
   const bootstrapContext = {
     Zotero: {
@@ -312,6 +342,9 @@ async function runBootstrapLifecycleTests({ failStart = false, failUnregister = 
       scriptloader: {
         loadSubScript(uri, scope) {
           calls.push(["load", uri]);
+          if (failOptionalLoad && uri.endsWith("chrome/content/modules/annotations.js")) {
+            throw new Error("optional module load failed");
+          }
           if (uri.endsWith("chrome/content/paperbridge.js")) {
             scope.PaperBridge = {
               init(payload) {
@@ -346,7 +379,7 @@ async function runBootstrapLifecycleTests({ failStart = false, failUnregister = 
 
   const startupPayload = {
     id: "paperbridge@example.com",
-    version: "0.1.3",
+    version: "0.1.28",
     rootURI: "resource://paperbridge/"
   };
   await bootstrapContext.startup.call(bootstrapContext, startupPayload);
@@ -355,6 +388,10 @@ async function runBootstrapLifecycleTests({ failStart = false, failUnregister = 
   assert.ok(calls.findIndex(call => call[0] === "add-windows") < calls.findIndex(call => call[0] === "after-windows"));
   if (failStart) {
     assert.ok(calls.some(call => call[0] === "log-error" && call[1].includes("start failed")));
+  }
+  if (failOptionalLoad) {
+    assert.ok(calls.some(call => call[0] === "log-error" && call[1].includes("optional module load failed")));
+    assert.ok(calls.some(call => call[0] === "start"));
   }
   await bootstrapContext.shutdown.call(bootstrapContext);
   assert.ok(calls.some(call => call[0] === "unregister-pref" && call[1] === "paperbridge-preferences-pane"));
@@ -415,7 +452,7 @@ async function runBootstrapCleanupFailureTest() {
   vm.runInContext(fs.readFileSync(path.join(root, "bootstrap.js"), "utf8"), bootstrapContext, { filename: "bootstrap.js" });
   await bootstrapContext.startup.call(bootstrapContext, {
     id: "paperbridge@example.com",
-    version: "0.1.3",
+    version: "0.1.28",
     rootURI: "resource://paperbridge/"
   });
   await assert.doesNotReject(() => bootstrapContext.shutdown.call(bootstrapContext));
@@ -438,6 +475,11 @@ async function runPaperBridgeStopCleanupTest() {
         stop() {
           calls.push("notifications");
           throw new Error("notification stop failed");
+        }
+      },
+      Notes: {
+        stop() {
+          calls.push("notes");
         }
       },
       Tray: {
@@ -489,6 +531,7 @@ async function runPaperBridgeStopCleanupTest() {
   await stopContext.PaperBridge.stop();
   assert.deepStrictEqual(calls, [
     "notifications",
+    "notes",
     "tray",
     "menus unregister",
     "menus remove",
@@ -515,6 +558,11 @@ async function runPaperBridgeStartupResilienceTest() {
       Util: {
         safeLogError(error) {
           errors.push(error.message);
+        }
+      },
+      Index: {
+        pruneStaleEntries() {
+          calls.push("index prune");
         }
       },
       Tray: {
@@ -544,6 +592,12 @@ async function runPaperBridgeStartupResilienceTest() {
       Notifications: {
         start() {
           calls.push("notifications");
+        },
+        stop() {}
+      },
+      Notes: {
+        start() {
+          calls.push("notes");
         },
         stop() {}
       },
@@ -581,7 +635,9 @@ async function runPaperBridgeStartupResilienceTest() {
   await assert.doesNotReject(() => context.PaperBridge.start());
   await assert.doesNotReject(() => context.PaperBridge.afterWindowsReady());
   assert.doesNotThrow(() => context.PaperBridge.addToAllWindows());
+  assert.ok(calls.includes("index prune"));
   assert.ok(calls.includes("item pane"));
+  assert.ok(calls.includes("notes"));
   assert.ok(calls.includes("notifications"));
   assert.ok(calls.includes("menus window"));
   assert.ok(calls.includes("shortcuts"));
@@ -593,16 +649,12 @@ async function runPaperBridgeStartupResilienceTest() {
 }
 
 for (const [file, text] of [
-  ["chrome/content/modules/notes.js", "## 一句话总结"],
-  ["chrome/content/modules/notes.js", "## 研究问题"],
-  ["chrome/content/modules/notes.js", "## 核心方法"],
-  ["chrome/content/modules/notes.js", "## 关键结论"],
-  ["chrome/content/modules/notes.js", "## 局限性"],
   ["chrome/content/modules/menus.js", "PaperBridge: 为选中条目创建笔记"],
   ["chrome/content/modules/menus.js", "PaperBridge: 扫描 Markdown 并重连"],
   ["chrome/content/modules/menus.js", "PaperBridge: 生成阅读队列"],
   ["chrome/content/modules/menus.js", "PaperBridge: 生成当前分类引用清单"],
-  ["chrome/content/modules/menus.js", "PaperBridge: 导出 PDF 注释到笔记"]
+  ["chrome/content/modules/menus.js", "PaperBridge: 导出 PDF 注释到笔记"],
+  ["chrome/content/modules/menus.js", "PaperBridge: 运行诊断"]
 ]) {
   assert.ok(sourceIncludes(file, text), `${file} should contain valid UTF-8 text: ${text}`);
 }
@@ -610,7 +662,7 @@ for (const [file, text] of [
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 assert.strictEqual(manifest.manifest_version, 2);
 assert.strictEqual(manifest.applications?.zotero?.id, "paperbridge@example.com");
-assert.strictEqual(manifest.version, "0.1.3");
+assert.strictEqual(manifest.version, "0.1.28");
 assert.strictEqual(manifest.applications?.zotero?.update_url, "https://example.com/paperbridge/updates.json");
 assert.strictEqual(manifest.applications?.zotero?.strict_min_version, "6.999");
 assert.strictEqual(manifest.applications?.zotero?.strict_max_version, "11.*");
@@ -625,9 +677,15 @@ assert.ok(trayHelperSource.includes("$client.SendTimeout = 1000"));
 assert.ok(trayHelperSource.includes("$headerLines -gt 64"));
 assert.ok(trayHelperSource.includes("PaperBridge:NOT_FOUND"));
 assert.ok(trayHelperSource.includes("$script:hiddenWindowHandles = @()"));
-assert.ok(trayHelperSource.includes("FindWindowsForProcess($ZoteroPid, [bool]$VisibleOnly)"));
+assert.ok(trayHelperSource.includes("function Get-ZoteroProcesses"));
+assert.ok(trayHelperSource.includes("FindWindowsForProcess([int]$process.Id, [bool]$VisibleOnly)"));
+assert.ok(trayHelperSource.includes("@(Get-ZoteroProcesses).Count -eq 0"));
 assert.ok(trayHelperSource.includes('"hide" { return Hide-Zotero }'));
 assert.ok(trayHelperSource.includes('"show" { return Show-Zotero }'));
+assert.ok(trayHelperSource.includes('"quit-zotero" { return Request-Zotero-Quit }'));
+assert.ok(trayHelperSource.includes("Open Zotero"));
+assert.ok(trayHelperSource.includes("Quit Zotero"));
+assert.ok(!trayHelperSource.includes("Exit tray helper"));
 
 const preferencesSource = fs.readFileSync(path.join(root, "preferences.xhtml"), "utf8");
 const preferenceL10nIDs = [...preferencesSource.matchAll(/data-l10n-id="([^"]+)"/g)].map(match => match[1]);
@@ -676,6 +734,7 @@ for (const localeFile of ["locale/en-US/paperbridge.ftl", "locale/zh-CN/paperbri
 }
 
 assert.strictEqual(PaperBridge.Settings.closeToTray(), false, "string false pref should parse to false");
+assert.doesNotThrow(() => PaperBridge.Util.logError(new Error("log test")));
 assert.doesNotThrow(() => PaperBridge.Util.safeLogError(new Error("safe log test")));
 assert.strictEqual(PaperBridge.Util.sanitizePathSegment('A <bad>: "title" / paper?.md'), "A bad title paper .md");
 assert.strictEqual(PaperBridge.Util.sanitizePathSegment("CON"), "CON_");
@@ -840,6 +899,18 @@ const mixedStateItem = Object.assign({}, mockItem, {
 });
 assert.strictEqual(PaperBridge.Ranks.getRank(mixedStateItem), "3");
 assert.strictEqual(PaperBridge.Ranks.getStatus(mixedStateItem), "read");
+const getterContentTypeAttachment = {
+  id: 31,
+  key: "PDFGET1",
+  getField(field) {
+    return field === "contentType" ? "application/pdf" : "";
+  },
+  getFilePath() {
+    return "D:\\Papers\\No Extension";
+  }
+};
+assert.strictEqual(PaperBridge.Notes.attachmentContentType(getterContentTypeAttachment), "application/pdf");
+assert.strictEqual(PaperBridge.Notes.isPDFAttachment(getterContentTypeAttachment), true);
 const originalGetSelectedCollectionForPrimary = PaperBridge.Util.getSelectedCollection;
 const stringCollectionIDPrimaryItem = Object.assign({}, mockItem, {
   getCollections() {
@@ -859,6 +930,7 @@ prefs.set("extensions.paperbridge.fallbackCitekeyPattern", "{{firstCreator}}{{ye
 context.Zotero.BetterBibTeX = null;
 PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   await runBootstrapLifecycleTests();
+  await runBootstrapLifecycleTests({ failOptionalLoad: true });
   await runBootstrapLifecycleTests({ failStart: true });
   await runBootstrapUnregisterFailureTest();
   await runBootstrapCleanupFailureTest();
@@ -884,6 +956,14 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(registeredMenus[0].menus[0].l10nID, "paperbridge-menu-root");
   assert.strictEqual(registeredMenus[0].menus[0].menus.length, PaperBridge.Menus.menuItems().length);
   assert.ok(registeredMenus[0].menus[0].menus.every(menu => menu.menuType === "menuitem" && menu.l10nID.startsWith("paperbridge-menu-")));
+  assert.ok(registeredMenus[0].menus[0].menus.every(menu => typeof menu.onShowing === "function"));
+  let enabledFromMenuManager = null;
+  registeredMenus[0].menus[0].menus[0].onShowing(null, {
+    setEnabled(value) {
+      enabledFromMenuManager = value;
+    }
+  });
+  assert.strictEqual(enabledFromMenuManager, true);
   PaperBridge.Menus.unregister();
   assert.strictEqual(unregisteredMenuID, "paperbridge-menu-registration");
   context.Zotero.MenuManager = {
@@ -899,6 +979,8 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(PaperBridge.Menus.registeredMenuID, null);
   delete context.Zotero.MenuManager;
 
+  const originalScannerForMenu = PaperBridge.Scanner;
+  PaperBridge.Scanner = null;
   const fakeMenuWindow = createFakeMenuWindow();
   PaperBridge.Menus.addToWindow(fakeMenuWindow.window);
   PaperBridge.Menus.addToWindow(fakeMenuWindow.window);
@@ -906,7 +988,38 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(fakeMenuWindow.toolsPopup.children[0].id, "paperbridge-tools-menu");
   const fallbackPopup = fakeMenuWindow.elements.get("paperbridge-tools-menu-popup");
   assert.strictEqual(fallbackPopup.children.length, PaperBridge.Menus.menuItems(fakeMenuWindow.window).length);
-  assert.ok(fallbackPopup.children.some(item => item.id === "paperbridge-scan-markdown-root" && item.attributes.label === "PaperBridge: 扫描 Markdown 并重连"));
+  const disabledScanMenuItem = fallbackPopup.children.find(item => item.id === "paperbridge-scan-markdown-root");
+  assert.strictEqual(disabledScanMenuItem.attributes.label, "PaperBridge: 扫描 Markdown 并重连");
+  assert.strictEqual(disabledScanMenuItem.attributes.disabled, "true");
+  assert.ok(disabledScanMenuItem.attributes.tooltiptext.includes("Scanner.scanMarkdownRoot"));
+  const unavailableMenuItem = PaperBridge.Menus.menuItems(fakeMenuWindow.window).find(item => item.id === "paperbridge-scan-markdown-root");
+  const unavailableManagerMenuItem = PaperBridge.Menus.toMenuManagerItem(unavailableMenuItem);
+  let disabledFromMenuManager = null;
+  unavailableManagerMenuItem.onShowing(null, {
+    setEnabled(value) {
+      disabledFromMenuManager = value;
+    }
+  });
+  assert.strictEqual(disabledFromMenuManager, false);
+  let unavailableMenuAlert = "";
+  const originalMenuAlert = PaperBridge.Util.alert;
+  PaperBridge.Util.alert = message => {
+    unavailableMenuAlert = message;
+  };
+  await PaperBridge.Menus.menuItems(fakeMenuWindow.window).find(item => item.id === "paperbridge-scan-markdown-root").command();
+  assert.ok(unavailableMenuAlert.includes("Scanner.scanMarkdownRoot"));
+  PaperBridge.Util.alert = originalMenuAlert;
+  PaperBridge.Scanner = originalScannerForMenu;
+  let enabledAfterRestore = null;
+  unavailableManagerMenuItem.onShowing(null, {
+    setEnabled(value) {
+      enabledAfterRestore = value;
+    }
+  });
+  assert.strictEqual(enabledAfterRestore, true);
+  fallbackPopup.listeners.popupshowing();
+  assert.strictEqual(disabledScanMenuItem.attributes.disabled, undefined);
+  assert.strictEqual(disabledScanMenuItem.attributes.tooltiptext, undefined);
   PaperBridge.Menus.removeFromWindow(fakeMenuWindow.window);
   assert.strictEqual(PaperBridge.Menus.addedElementIDs.has(fakeMenuWindow.window), false);
   assert.strictEqual(fakeMenuWindow.elements.has("paperbridge-tools-menu"), false);
@@ -966,23 +1079,45 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   prefs.set("extensions.paperbridge.trayToken", "");
   context.fetch = originalFetch;
 
+  const originalEnsureHelperRunningForFailure = PaperBridge.Tray.ensureHelperRunning;
+  const originalSendCommandForFailure = PaperBridge.Tray.sendCommand;
+  let minimizedByFailedHelper = false;
+  prefs.set("extensions.paperbridge.closeToTray", "true");
+  PaperBridge.Tray.ensureHelperRunning = async () => {};
+  PaperBridge.Tray.sendCommand = async () => false;
+  await assert.rejects(
+    () => PaperBridge.Tray.hideWindow({
+      minimize() {
+        minimizedByFailedHelper = true;
+      }
+    }),
+    /left visible/
+  );
+  assert.strictEqual(minimizedByFailedHelper, false);
+  PaperBridge.Tray.ensureHelperRunning = originalEnsureHelperRunningForFailure;
+  PaperBridge.Tray.sendCommand = originalSendCommandForFailure;
+  prefs.set("extensions.paperbridge.closeToTray", "false");
+
   observerRegistrations.length = 0;
   observerRemovals.length = 0;
   PaperBridge.Tray.allowQuit = true;
   PaperBridge.Tray.quitObserver = null;
   PaperBridge.Tray.start();
   assert.strictEqual(PaperBridge.Tray.allowQuit, false);
-  assert.deepStrictEqual(observerRegistrations.map(entry => entry.topic), ["quit-application-granted", "quit-application"]);
+  assert.deepStrictEqual(observerRegistrations.map(entry => entry.topic), ["quit-application-requested"]);
   let trayClosePrevented = false;
   let trayCloseStopped = false;
   let trayHideCalled = false;
   const originalIsWin = context.Zotero.isWin;
+  const originalGetMainWindowsForTray = context.Zotero.getMainWindows;
   const originalHideWindow = PaperBridge.Tray.hideWindow;
   prefs.set("extensions.paperbridge.closeToTray", "true");
   context.Zotero.isWin = true;
+  context.Zotero.getMainWindows = () => [{}];
   PaperBridge.Tray.hideWindow = async () => {
     trayHideCalled = true;
   };
+  PaperBridge.Tray.closeHidePromise = null;
   PaperBridge.Tray.onClose({
     preventDefault() {
       trayClosePrevented = true;
@@ -991,10 +1126,112 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
       trayCloseStopped = true;
     }
   }, {});
+  await PaperBridge.Tray.closeHidePromise;
   assert.strictEqual(trayClosePrevented, true);
   assert.strictEqual(trayCloseStopped, true);
   assert.strictEqual(trayHideCalled, true);
-  PaperBridge.Tray.quitObserver.observe(null, "quit-application-granted");
+
+  trayClosePrevented = false;
+  trayCloseStopped = false;
+  trayHideCalled = false;
+  const beforeUnloadEvent = {
+    returnValue: true,
+    preventDefault() {
+      trayClosePrevented = true;
+    },
+    stopPropagation() {
+      trayCloseStopped = true;
+    }
+  };
+  assert.strictEqual(PaperBridge.Tray.onBeforeUnload(beforeUnloadEvent, {}), false);
+  await PaperBridge.Tray.closeHidePromise;
+  assert.strictEqual(beforeUnloadEvent.returnValue, false);
+  assert.strictEqual(trayClosePrevented, true);
+  assert.strictEqual(trayCloseStopped, true);
+  assert.strictEqual(trayHideCalled, true);
+
+  trayHideCalled = false;
+  prefs.set("extensions.paperbridge.trayToken", "external quit token");
+  const quitRequestPath = PaperBridge.Tray.quitRequestPath();
+  pathTypes.set(quitRequestPath, "regular");
+  fileContentsByPath.set(quitRequestPath, "external quit token");
+  const externalQuitEvent = {
+    preventDefault() {
+      trayClosePrevented = true;
+    }
+  };
+  trayClosePrevented = false;
+  assert.strictEqual(PaperBridge.Tray.interceptWindowClose(externalQuitEvent, {}), false);
+  assert.strictEqual(PaperBridge.Tray.allowQuit, true);
+  assert.strictEqual(trayClosePrevented, false);
+  assert.strictEqual(trayHideCalled, false);
+  assert.strictEqual(pathTypes.has(quitRequestPath), false);
+  PaperBridge.Tray.allowQuit = false;
+  prefs.set("extensions.paperbridge.trayToken", "");
+
+  let originalCloseCalls = 0;
+  let originalQuitCalls = 0;
+  let hookedHideCalls = 0;
+  const addedTrayEvents = [];
+  const removedTrayEvents = [];
+  const hookedWindow = {
+    addEventListener(type, listener, capture) {
+      addedTrayEvents.push({ type, listener, capture });
+    },
+    removeEventListener(type, listener, capture) {
+      removedTrayEvents.push({ type, listener, capture });
+    },
+    close() {
+      originalCloseCalls++;
+    },
+    goQuitApplication() {
+      originalQuitCalls++;
+    }
+  };
+  PaperBridge.Tray.hideWindow = async () => {
+    hookedHideCalls++;
+  };
+  PaperBridge.Tray.addToWindow(hookedWindow);
+  assert.ok(PaperBridge.Tray.helperWarmupTimer);
+  PaperBridge.Tray.cancelHelperWarmup();
+  assert.strictEqual(PaperBridge.Tray.helperWarmupTimer, null);
+  assert.deepStrictEqual(addedTrayEvents.map(event => event.type), ["close", "beforeunload"]);
+  hookedWindow.close();
+  await PaperBridge.Tray.closeHidePromise;
+  assert.strictEqual(hookedHideCalls, 1);
+  assert.strictEqual(originalCloseCalls, 0);
+  hookedWindow.goQuitApplication();
+  await PaperBridge.Tray.closeHidePromise;
+  assert.strictEqual(hookedHideCalls, 2);
+  assert.strictEqual(originalQuitCalls, 0);
+  PaperBridge.Tray.allowQuit = true;
+  hookedWindow.close();
+  hookedWindow.goQuitApplication();
+  assert.strictEqual(originalCloseCalls, 1);
+  assert.strictEqual(originalQuitCalls, 1);
+  PaperBridge.Tray.allowQuit = false;
+  PaperBridge.Tray.removeFromWindow(hookedWindow);
+  assert.deepStrictEqual(removedTrayEvents.map(event => event.type), ["close", "beforeunload"]);
+  hookedWindow.close();
+  assert.strictEqual(originalCloseCalls, 2);
+
+  PaperBridge.Tray.hideWindow = async () => {
+    trayHideCalled = true;
+  };
+  trayHideCalled = false;
+  const quitSubject = { data: false };
+  PaperBridge.Tray.quitObserver.observe(quitSubject, "quit-application-requested", "");
+  assert.strictEqual(quitSubject.data, true);
+  assert.strictEqual(trayHideCalled, true);
+  assert.strictEqual(PaperBridge.Tray.allowQuit, false);
+
+  trayHideCalled = false;
+  const systemQuitSubject = { data: false };
+  PaperBridge.Tray.quitObserver.observe(systemQuitSubject, "quit-application-requested", "os-shutdown");
+  assert.strictEqual(systemQuitSubject.data, false);
+  assert.strictEqual(trayHideCalled, false);
+  assert.strictEqual(PaperBridge.Tray.allowQuit, true);
+
   trayClosePrevented = false;
   trayCloseStopped = false;
   trayHideCalled = false;
@@ -1010,10 +1247,11 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(trayCloseStopped, false);
   assert.strictEqual(trayHideCalled, false);
   await PaperBridge.Tray.stop();
-  assert.deepStrictEqual(observerRemovals.map(entry => entry.topic), ["quit-application-granted", "quit-application"]);
+  assert.deepStrictEqual(observerRemovals.map(entry => entry.topic), ["quit-application-requested"]);
   assert.strictEqual(PaperBridge.Tray.quitObserver, null);
   assert.strictEqual(PaperBridge.Tray.allowQuit, false);
   PaperBridge.Tray.hideWindow = originalHideWindow;
+  context.Zotero.getMainWindows = originalGetMainWindowsForTray;
   context.Zotero.isWin = originalIsWin;
   prefs.set("extensions.paperbridge.closeToTray", "false");
 
@@ -1052,31 +1290,32 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     "Body"
   ].join("\n"));
   assert.strictEqual(PaperBridge.Notes.getNoteAttachment(mockItem), attachmentByID.get(101));
-  assert.strictEqual(PaperBridge.ItemPane.summaryForItem(mockItem), "Note M / Rank 1");
-  assert.deepStrictEqual(plain(PaperBridge.ItemPane.rowsForItem(mockItem)), [
-    {
-      label: "Note",
-      labelL10nID: "paperbridge-item-pane-row-note",
-      value: "Ready",
-      valueL10nID: "paperbridge-item-pane-note-ready"
-    },
-    {
-      label: "Path",
-      labelL10nID: "paperbridge-item-pane-row-path",
-      value: "D:\\Papers\\Note.md",
-      valueL10nID: ""
-    },
-    {
-      label: "Rank",
-      labelL10nID: "paperbridge-item-pane-row-rank",
-      value: "1"
-    },
-    {
-      label: "Status",
-      labelL10nID: "paperbridge-item-pane-row-status",
-      value: "-"
-    }
-  ]);
+  assert.strictEqual(PaperBridge.ItemPane.summaryForItem(mockItem), "Ready / Rank 1 / -");
+  const originalRefreshColumnsForMonitor = PaperBridge.Util.refreshItemTreeColumns;
+  let monitorRefreshes = 0;
+  PaperBridge.Util.refreshItemTreeColumns = () => {
+    monitorRefreshes++;
+  };
+  PaperBridge.Notes.frontmatterValidationCache.set("cached", { modifiedTime: 1, ok: true });
+  PaperBridge.Notes.start();
+  assert.ok(PaperBridge.Notes.externalRefreshTimer);
+  PaperBridge.Notes.refreshExternalFileState();
+  assert.strictEqual(PaperBridge.Notes.frontmatterValidationCache.size, 0);
+  assert.strictEqual(monitorRefreshes, 1);
+  PaperBridge.Notes.stop();
+  assert.strictEqual(PaperBridge.Notes.externalRefreshTimer, null);
+  PaperBridge.Util.refreshItemTreeColumns = originalRefreshColumnsForMonitor;
+  const itemPaneRows = plain(PaperBridge.ItemPane.rowsForItem(mockItem));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-next" && row.value === "Open Markdown note"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-note" && row.value === "Ready"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-pdf" && row.value === "No PDF attached"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-path" && row.value === "D:\\Papers\\Note.md"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-rank" && row.value === "1"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-status" && row.value === "-"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-citekey" && row.value === "doe2024_a"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-file" && row.value === "Exists"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-attachment" && row.value === "Linked"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-updated" && row.value === "-"));
   let itemPaneOptions = null;
   let unregisteredPaneID = null;
   let insertedFTL = "";
@@ -1096,6 +1335,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(itemPaneOptions.paneID, "paperbridge");
   assert.strictEqual(itemPaneOptions.pluginID, "paperbridge@example.com");
   assert.strictEqual(itemPaneOptions.header.icon, "resource://paperbridge/icons/paperbridge-16.svg");
+  assert.strictEqual(itemPaneOptions.sidenav.l10nID, "paperbridge-item-pane-sidenav");
   assert.strictEqual(itemPaneOptions.sidenav.icon, "resource://paperbridge/icons/paperbridge-20.svg");
   itemPaneOptions.onItemChange({
     doc: {
@@ -1112,7 +1352,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
       assert.strictEqual(value, true);
     },
     setSectionSummary(value) {
-      assert.strictEqual(value, "Note M / Rank 1");
+      assert.strictEqual(value, "Ready / Rank 1 / -");
     }
   });
   assert.strictEqual(insertedFTL, "paperbridge.ftl");
@@ -1128,6 +1368,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
       let textContent = "";
       return {
         tagName,
+        ownerDocument: testDoc,
         attributes: {},
         children: [],
         listeners: {},
@@ -1177,18 +1418,21 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   };
   const testBody = testDoc.createElement("div");
   itemPaneOptions.onRender({
-    doc: testDoc,
     body: testBody,
     item: mockItem,
     setEnabled() {},
     setSectionSummary() {}
   });
   assert.ok(l10nAttributes.includes("paperbridge-item-pane-row-note"));
+  assert.ok(l10nAttributes.includes("paperbridge-item-pane-row-next"));
+  assert.ok(l10nAttributes.includes("paperbridge-item-pane-row-pdf"));
   assert.ok(l10nAttributes.includes("paperbridge-item-pane-note-ready"));
+  assert.ok(l10nAttributes.includes("paperbridge-item-pane-next-open"));
   assert.ok(l10nAttributes.includes("paperbridge-item-pane-action-open-create"));
+  assert.ok(l10nAttributes.includes("paperbridge-item-pane-action-export-annotations"));
   const originalHandleNoteClickForPane = PaperBridge.Notes.handleNoteClick;
   const originalRefreshColumnsForPane = PaperBridge.Util.refreshItemTreeColumns;
-  const paneActions = testBody.children[0].children[1];
+  const paneActions = testBody.children[0].children[3];
   const openCreateButton = paneActions.children[0];
   const paneEvents = [];
   PaperBridge.Notes.handleNoteClick = async itemID => paneEvents.push(`open:${itemID}`);
@@ -1201,11 +1445,153 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(openCreateButton.disabled, true);
   assert.deepStrictEqual(paneEvents, ["prevent", "open:42", "refresh-columns"]);
   assert.strictEqual(testBody.children.length, 1);
-  assert.ok(testBody.children[0].children[1].children[0].listeners.click);
+  assert.ok(testBody.children[0].children[3].children[0].listeners.click);
+  const originalPaneAlert = PaperBridge.Util.alert;
+  let paneAlert = "";
+  PaperBridge.Util.alert = message => {
+    paneAlert = message;
+  };
+  const refreshedPaneActions = testBody.children[0].children[3];
+  PaperBridge.ItemPane.addActionButton(testDoc, refreshedPaneActions, mockItem, "Fail", "", () => {
+    throw new Error("sync pane failure");
+  });
+  const failingPaneButton = refreshedPaneActions.children[refreshedPaneActions.children.length - 1];
+  await failingPaneButton.listeners.click({
+    preventDefault() {
+      paneEvents.push("prevent-fail");
+    },
+    stopPropagation() {
+      paneEvents.push("stop-fail");
+    }
+  });
+  assert.strictEqual(failingPaneButton.disabled, false);
+  assert.ok(paneAlert.includes("sync pane failure"));
+  assert.ok(paneEvents.includes("stop-fail"));
+  PaperBridge.Util.alert = originalPaneAlert;
+  const originalDegradedPaneNotes = PaperBridge.Notes;
+  const originalDegradedPaneRanks = PaperBridge.Ranks;
+  const originalDegradedPaneIndex = PaperBridge.Index;
+  const originalDegradedPaneAnnotations = PaperBridge.Annotations;
+  PaperBridge.Notes = null;
+  PaperBridge.Ranks = null;
+  PaperBridge.Index = null;
+  PaperBridge.Annotations = null;
+  const degradedPaneBody = testDoc.createElement("div");
+  let degradedPaneEnabled = null;
+  let degradedPaneSummary = "";
+  assert.doesNotThrow(() => itemPaneOptions.onRender({
+    body: degradedPaneBody,
+    item: mockItem,
+    setEnabled(value) {
+      degradedPaneEnabled = value;
+    },
+    setSectionSummary(value) {
+      degradedPaneSummary = value;
+    }
+  }));
+  assert.strictEqual(degradedPaneEnabled, true);
+  assert.ok(degradedPaneSummary.includes("Unavailable"));
+  assert.ok(l10nAttributes.includes("paperbridge-item-pane-value-unavailable"));
+  const degradedPaneActions = degradedPaneBody.children[0].children[3];
+  assert.ok(degradedPaneActions.children.length >= 5);
+  assert.ok(degradedPaneActions.children.every(button => button.disabled === true));
+  PaperBridge.Notes = originalDegradedPaneNotes;
+  PaperBridge.Ranks = originalDegradedPaneRanks;
+  PaperBridge.Index = originalDegradedPaneIndex;
+  PaperBridge.Annotations = originalDegradedPaneAnnotations;
   PaperBridge.Notes.handleNoteClick = originalHandleNoteClickForPane;
   PaperBridge.Util.refreshItemTreeColumns = originalRefreshColumnsForPane;
   PaperBridge.ItemPane.unregister();
   assert.strictEqual(unregisteredPaneID, "paperbridge-paperbridge");
+  const previousDiagnosticsIndex = prefs.get("extensions.paperbridge.index");
+  const originalDiagnosticsSendCommand = PaperBridge.Tray.sendCommand;
+  PaperBridge.version = "0.1.28";
+  PaperBridge.Tray.sendCommand = async command => command === "ping";
+  prefs.set("extensions.paperbridge.closeToTray", "true");
+  zoteroItemsByID.set(mockItem.id, mockItem);
+  zoteroItemsByID.set(908, Object.assign({}, mockItem, {
+    id: 908,
+    key: "DIAGDEL",
+    deleted: true
+  }));
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:ABCD1234": {
+      note_path: "D:\\Papers\\Note.md",
+      zotero_key: "ABCD1234",
+      item_id: 42,
+      library_id: 1,
+      primary_collection: "Inbox"
+    },
+    "1:DIAGDEL": {
+      note_path: "D:\\Papers\\Deleted.md",
+      zotero_key: "DIAGDEL",
+      item_id: 908,
+      library_id: 1,
+      primary_collection: "Inbox"
+    }
+  }));
+  const diagnosticsReport = await PaperBridge.Diagnostics.buildReport([mockItem]);
+  assert.ok(diagnosticsReport.includes("PaperBridge: 0.1.28"));
+  assert.ok(diagnosticsReport.includes("stale/deleted/missing item entries: 1"));
+  assert.ok(diagnosticsReport.includes("helper reachable: yes"));
+  assert.ok(diagnosticsReport.includes("Item 42: A Study: On Invalid / Windows * Names"));
+  assert.ok(diagnosticsReport.includes("frontmatter: valid"));
+  assert.ok(diagnosticsReport.includes("note file: exists"));
+  let clipboardText = "";
+  const originalClipboardContract = context.Cc["@mozilla.org/widget/clipboardhelper;1"];
+  const originalClipboardInterface = context.Ci.nsIClipboardHelper;
+  const originalDiagnosticsAlert = PaperBridge.Util.alert;
+  context.Cc["@mozilla.org/widget/clipboardhelper;1"] = {
+    getService() {
+      return {
+        copyString(text) {
+          clipboardText = text;
+        }
+      };
+    }
+  };
+  context.Ci.nsIClipboardHelper = "nsIClipboardHelper";
+  let diagnosticsAlert = "";
+  PaperBridge.Util.alert = message => {
+    diagnosticsAlert = message;
+  };
+  await PaperBridge.Diagnostics.showReport([mockItem]);
+  assert.ok(clipboardText.includes("PaperBridge: 0.1.28"));
+  assert.ok(diagnosticsAlert.includes("copied to the clipboard"));
+  PaperBridge.Util.alert = originalDiagnosticsAlert;
+  if (originalClipboardContract === undefined) {
+    delete context.Cc["@mozilla.org/widget/clipboardhelper;1"];
+  }
+  else {
+    context.Cc["@mozilla.org/widget/clipboardhelper;1"] = originalClipboardContract;
+  }
+  if (originalClipboardInterface === undefined) {
+    delete context.Ci.nsIClipboardHelper;
+  }
+  else {
+    context.Ci.nsIClipboardHelper = originalClipboardInterface;
+  }
+  PaperBridge.Tray.sendCommand = originalDiagnosticsSendCommand;
+  const originalDiagnosticsTray = PaperBridge.Tray;
+  const originalDiagnosticsNotes = PaperBridge.Notes;
+  const originalDiagnosticsRanks = PaperBridge.Ranks;
+  const originalDiagnosticsIndexModule = PaperBridge.Index;
+  PaperBridge.Tray = null;
+  PaperBridge.Notes = null;
+  PaperBridge.Ranks = null;
+  PaperBridge.Index = null;
+  const degradedDiagnosticsReport = await PaperBridge.Diagnostics.buildReport([mockItem]);
+  assert.ok(degradedDiagnosticsReport.includes("index unavailable: Index module is unavailable"));
+  assert.ok(degradedDiagnosticsReport.includes("tray unavailable: Tray module is unavailable"));
+  assert.ok(degradedDiagnosticsReport.includes("note state: unavailable"));
+  assert.ok(degradedDiagnosticsReport.includes("rank/status: unavailable"));
+  assert.ok(degradedDiagnosticsReport.includes("citekey: unavailable"));
+  PaperBridge.Tray = originalDiagnosticsTray;
+  PaperBridge.Notes = originalDiagnosticsNotes;
+  PaperBridge.Ranks = originalDiagnosticsRanks;
+  PaperBridge.Index = originalDiagnosticsIndexModule;
+  prefs.set("extensions.paperbridge.closeToTray", "false");
+  prefs.set("extensions.paperbridge.index", previousDiagnosticsIndex);
   context.Zotero.ItemPaneManager = {
     registerSection() {
       return "paperbridge-throwing-pane";
@@ -1292,6 +1678,45 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
 
   const registeredColumns = [];
   const unregisteredColumns = [];
+  let refreshColumnsCalled = 0;
+  const originalProfileForColumns = context.Zotero.Profile;
+  const originalGetMainWindowsForColumns = context.Zotero.getMainWindows;
+  const treePrefsPath = path.win32.join("D:\\Profile", "treePrefs.json");
+  pathTypes.set(treePrefsPath, "regular");
+  fileContentsByPath.set(treePrefsPath, JSON.stringify({
+    "item-tree-main-default": {
+      "registered-paperbridge-note": {
+        dataKey: "registered-paperbridge-note",
+        hidden: true
+      },
+      "registered-paperbridge-rank": {
+        dataKey: "registered-paperbridge-rank",
+        hidden: true
+      }
+    }
+  }));
+  context.Zotero.Profile = { dir: "D:\\Profile" };
+  let runtimeColumnsInvalidated = 0;
+  let runtimeColumnsRefreshed = 0;
+  const fakeItemTree = {
+    _columns: [
+      { dataKey: "registered-paperbridge-note", hidden: true },
+      { dataKey: "registered-paperbridge-rank", hidden: true }
+    ],
+    _columnPrefs: {
+      "registered-paperbridge-note": { hidden: true },
+      "registered-paperbridge-rank": { hidden: true }
+    },
+    tree: {
+      invalidate() {
+        runtimeColumnsInvalidated++;
+      }
+    },
+    refreshAndMaintainSelection() {
+      runtimeColumnsRefreshed++;
+    }
+  };
+  context.Zotero.getMainWindows = () => [{ ZoteroPane: { itemsView: fakeItemTree } }];
   context.Zotero.ItemTreeManager = {
     async registerColumn(options) {
       registeredColumns.push(options);
@@ -1300,6 +1725,9 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     async unregisterColumn(key) {
       unregisteredColumns.push(key);
       return true;
+    },
+    refreshColumns() {
+      refreshColumnsCalled++;
     }
   };
   await PaperBridge.Columns.register();
@@ -1307,10 +1735,36 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.deepStrictEqual(registeredColumns.map(column => column.dataKey), ["paperbridge-note", "paperbridge-rank"]);
   assert.deepStrictEqual(registeredColumns.map(column => column.label), ["笔记", "等级"]);
   assert.deepStrictEqual(registeredColumns.map(column => column.pluginID), [PaperBridge.id, PaperBridge.id]);
+  assert.deepStrictEqual(registeredColumns.map(column => Object.prototype.hasOwnProperty.call(column, "defaultIn")), [false, false]);
+  assert.deepStrictEqual(registeredColumns.map(column => column.hidden), [false, false]);
+  assert.deepStrictEqual(registeredColumns.map(column => column.showInColumnPicker), [true, true]);
   assert.strictEqual(registeredColumns[0].dataProvider(mockItem), "42|M");
   assert.strictEqual(registeredColumns[1].dataProvider(mockItem), "42|1");
+  const updatedTreePrefs = JSON.parse(fileContentsByPath.get(treePrefsPath));
+  assert.strictEqual(updatedTreePrefs["item-tree-main-default"]["registered-paperbridge-note"].hidden, false);
+  assert.strictEqual(updatedTreePrefs["item-tree-main-default"]["registered-paperbridge-rank"].hidden, false);
+  assert.deepStrictEqual(fakeItemTree._columns.map(column => column.hidden), [false, false]);
+  assert.strictEqual(fakeItemTree._columnPrefs["registered-paperbridge-note"].hidden, false);
+  assert.strictEqual(fakeItemTree._columnPrefs["registered-paperbridge-rank"].hidden, false);
+  assert.strictEqual(runtimeColumnsInvalidated, 1);
+  assert.strictEqual(runtimeColumnsRefreshed, 1);
+  assert.strictEqual(refreshColumnsCalled, 1);
   await PaperBridge.Columns.unregister();
   assert.deepStrictEqual(unregisteredColumns, ["registered-paperbridge-note", "registered-paperbridge-rank"]);
+  if (originalProfileForColumns === undefined) {
+    delete context.Zotero.Profile;
+  }
+  else {
+    context.Zotero.Profile = originalProfileForColumns;
+  }
+  if (originalGetMainWindowsForColumns === undefined) {
+    delete context.Zotero.getMainWindows;
+  }
+  else {
+    context.Zotero.getMainWindows = originalGetMainWindowsForColumns;
+  }
+  pathTypes.delete(treePrefsPath);
+  fileContentsByPath.delete(treePrefsPath);
   PaperBridge.Columns.registeredKeys = ["registered-paperbridge-note", "registered-paperbridge-rank"];
   const throwingUnregisteredColumns = [];
   context.Zotero.ItemTreeManager = {
@@ -1470,6 +1924,40 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
       return [154];
     }
   };
+  const getterPDFContentTypeAttachment = {
+    id: 149,
+    key: "PDFGET2",
+    libraryID: 1,
+    getField(field) {
+      return {
+        title: "Getter MIME PDF",
+        contentType: "application/pdf"
+      }[field] || "";
+    },
+    getFilePath() {
+      return "D:\\Papers\\No Extension Attachment";
+    },
+    getAnnotations() {
+      return [];
+    }
+  };
+  const nonPDFAttachment = {
+    id: 148,
+    key: "NOTPDF1",
+    libraryID: 1,
+    contentType: "text/plain",
+    getField(field) {
+      return field === "title" ? "Plain Text" : "";
+    },
+    getFilePath() {
+      return "D:\\Papers\\Notes.txt";
+    },
+    getAnnotations() {
+      throw new Error("Non-PDF attachment should not be scanned");
+    }
+  };
+  attachmentByID.set(148, nonPDFAttachment);
+  attachmentByID.set(149, getterPDFContentTypeAttachment);
   attachmentByID.set(150, pdfAttachment);
   attachmentByID.set(153, supplementAttachment);
   attachmentByID.set(151, {
@@ -1533,25 +2021,56 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
       return ["getter-tag", { tag: "field-tag" }];
     }
   });
+  attachmentByID.set(158, {
+    id: 158,
+    itemTypeName: "annotation",
+    type: "highlight",
+    annotatedText: "Template shaped text",
+    comment: "Template shaped comment",
+    color: "#aaaaaa",
+    annotationPosition: "{\"pageIndex\":7}",
+    getTags() {
+      return [];
+    }
+  });
+  attachmentByID.set(159, {
+    id: 159,
+    itemTypeName: "annotation",
+    type: "note",
+    text: "Legacy text field",
+    comment: "",
+    pageLabel: "ix",
+    sortIndex: "00000|000005|00000",
+    getTags() {
+      return [];
+    }
+  });
+  pdfAttachment.getAnnotations = () => [151, 152, 155, 158, 159];
   const annotatedItem = Object.assign({}, mockItem, {
     getAttachments() {
-      return [150, 153];
+      return [148, 149, 150, 153];
     }
   });
   const annotationEntries = await PaperBridge.Annotations.annotationsForItem(annotatedItem);
-  assert.strictEqual(annotationEntries.length, 4);
+  assert.strictEqual(annotationEntries.length, 6);
+  assert.deepStrictEqual(PaperBridge.Annotations.pdfAttachments(annotatedItem).map(attachment => attachment.id), [149, 150, 153]);
   const annotationSection = PaperBridge.Annotations.renderAnnotationSection(annotatedItem, annotationEntries);
   assert.ok(annotationSection.includes("## Zotero PDF Annotations"));
   assert.ok(annotationSection.includes("### Main PDF"));
   assert.ok(annotationSection.indexOf("### Main PDF") < annotationSection.indexOf("### Supplement PDF"));
   assert.ok(annotationSection.includes("[p. 4](zotero://open-pdf/library/items/PDFKEY1?page=4&annotation=ANN1)"));
   assert.ok(annotationSection.includes("[p. 6](zotero://open-pdf/library/items/PDFKEY1?page=6&annotation=ANNFIELD)"));
+  assert.ok(annotationSection.includes("[p. 8](zotero://open-pdf/library/items/PDFKEY1?page=8&annotation=158)"));
+  assert.ok(annotationSection.includes("[p. ix](zotero://open-pdf/library/items/PDFKEY1?page=ix&annotation=159)"));
   assert.ok(annotationSection.includes("[p. A\\]1](zotero://open-pdf/library/items/PDF%20KEY3?page=A%5D1&annotation=ANN3)"));
   assert.ok(annotationSection.includes("> Important \\[quoted\\] text"));
   assert.ok(annotationSection.includes("> Getter backed text"));
+  assert.ok(annotationSection.includes("> Template shaped text"));
+  assert.ok(annotationSection.includes("> Legacy text field"));
   assert.ok(annotationSection.includes("Note: Check this"));
   assert.ok(annotationSection.includes("Note: Standalone note\n    second line \\[check\\]"));
   assert.ok(annotationSection.includes("Note: Getter backed comment"));
+  assert.ok(annotationSection.includes("Note: Template shaped comment"));
   assert.ok(annotationSection.includes("Tags: #key-point"));
   assert.ok(annotationSection.includes("Tags: #getter-tag #field-tag"));
   const annotatedOnce = PaperBridge.Annotations.updateAnnotationSection("Intro", annotationSection);
@@ -1601,6 +2120,43 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(searchFallbackAnnotations[0].key, "ANN1");
   searchIDs = [];
 
+  attachmentByID.set(156, {
+    id: 156,
+    key: "ANNATTID",
+    itemType: "annotation",
+    annotationType: "highlight",
+    annotationText: "Attachment ID backed annotation",
+    attachmentItemID: 161,
+    getTags() {
+      return [];
+    }
+  });
+  attachmentByID.set(157, {
+    id: 157,
+    key: "ANNATTKEY",
+    itemType: "annotation",
+    annotationType: "highlight",
+    annotationText: "Attachment key backed annotation",
+    attachment: { itemKey: "PDFKEYNEST" },
+    getTags() {
+      return [];
+    }
+  });
+  searchIDs = [156, 157];
+  const attachmentIDAlias = await PaperBridge.Annotations.annotationsForAttachment(Object.assign({}, pdfAttachment, {
+    id: 161,
+    key: "PDFKEYID",
+    getAnnotations: undefined
+  }));
+  assert.deepStrictEqual(plain(attachmentIDAlias.map(annotation => annotation.key)), ["ANNATTID"]);
+  const attachmentKeyAlias = await PaperBridge.Annotations.annotationsForAttachment(Object.assign({}, pdfAttachment, {
+    id: 162,
+    key: "PDFKEYNEST",
+    getAnnotations: undefined
+  }));
+  assert.deepStrictEqual(plain(attachmentKeyAlias.map(annotation => annotation.key)), ["ANNATTKEY"]);
+  searchIDs = [];
+
   const originalSearch = context.Zotero.Search;
   let fallbackLibraryID = null;
   context.Zotero.Search = function () {
@@ -1641,6 +2197,21 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   }));
   assert.strictEqual(PaperBridge.Notes.getNoteAttachment(mockItem), attachmentByID.get(101));
   assert.strictEqual(PaperBridge.Index.get(mockItem).note_path, "D:/Papers/Note.md");
+  const indexedAttachment = {
+    isAttachment: () => true,
+    getField: () => "Other Title",
+    getFilePath: () => "D:\\Papers\\Indexed.md"
+  };
+  attachmentByID.set(100, {
+    isAttachment: () => true,
+    getField: () => "Markdown Reading Note",
+    getFilePath: () => "D:\\Papers\\Old Duplicate.md"
+  });
+  attachmentByID.set(101, indexedAttachment);
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:ABCD1234": { note_path: "D:/Papers/Indexed.md" }
+  }));
+  assert.strictEqual(PaperBridge.Notes.getNoteAttachment(mockItem), indexedAttachment);
   const indexedSameKeyGroupItem = Object.assign({}, mockItem, {
     id: 402,
     libraryID: 2
@@ -1649,7 +2220,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   PaperBridge.Index.set(indexedSameKeyGroupItem, { note_path: "D:/Papers/Group Note.md" });
   assert.strictEqual(PaperBridge.Index.get(indexedSameKeyGroupItem).note_path, "D:/Papers/Group Note.md");
   assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index"))["2:ABCD1234"].library_id, 2);
-  assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index")).ABCD1234.note_path, "D:/Papers/Note.md");
+  assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index"))["1:ABCD1234"].note_path, "D:/Papers/Indexed.md");
 
   prefs.set("extensions.paperbridge.index", "[]");
   PaperBridge.Index.set(mockItem, { note_path: "D:/Papers/From Array Index.md" });
@@ -1660,8 +2231,70 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.doesNotThrow(() => PaperBridge.Index.get(mockItem));
   PaperBridge.Index.set(mockItem, { note_path: "D:/Papers/Recovered Index.md" });
   assert.strictEqual(PaperBridge.Index.get(mockItem).note_path, "D:/Papers/Recovered Index.md");
+  zoteroItemsByID.set(mockItem.id, mockItem);
+  const deletedIndexedItem = Object.assign({}, mockItem, {
+    id: 998,
+    key: "DELETED1",
+    deleted: true,
+    getAttachments() {
+      return [];
+    }
+  });
+  zoteroItemsByID.set(deletedIndexedItem.id, deletedIndexedItem);
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:ABCD1234": {
+      note_path: "D:/Papers/Valid.md",
+      zotero_key: "ABCD1234",
+      item_id: 42,
+      library_id: 1
+    },
+    "1:DELETED1": {
+      note_path: "D:/Papers/Deleted.md",
+      zotero_key: "DELETED1",
+      item_id: 998,
+      library_id: 1
+    },
+    "1:MISSING1": {
+      note_path: "D:/Papers/Missing.md",
+      zotero_key: "MISSING1",
+      item_id: 999,
+      library_id: 1
+    }
+  }));
+  const pruneResult = PaperBridge.Index.pruneStaleEntries();
+  const prunedIndex = JSON.parse(prefs.get("extensions.paperbridge.index"));
+  assert.deepStrictEqual(plain(pruneResult), { checked: 3, removed: 2 });
+  assert.ok(prunedIndex["1:ABCD1234"]);
+  assert.strictEqual(prunedIndex["1:DELETED1"], undefined);
+  assert.strictEqual(prunedIndex["1:MISSING1"], undefined);
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:DELETED1": {
+      note_path: "D:/Papers/Deleted.md",
+      zotero_key: "DELETED1",
+      item_id: 998,
+      library_id: 1
+    }
+  }));
+  assert.strictEqual(PaperBridge.Index.removeByItemID(998), true);
+  assert.deepStrictEqual(JSON.parse(prefs.get("extensions.paperbridge.index")), {});
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:DELETED1": {
+      note_path: "D:/Papers/Deleted.md",
+      zotero_key: "DELETED1",
+      item_id: 998,
+      library_id: 1
+    }
+  }));
+  assert.strictEqual(PaperBridge.Index.removeByLibraryAndKey(1, "DELETED1"), true);
+  assert.deepStrictEqual(JSON.parse(prefs.get("extensions.paperbridge.index")), {});
 
   prefs.set("extensions.paperbridge.index", "{}");
+  attachmentByID.set(100, {
+    isAttachment: () => true,
+    getField: () => "Other Title",
+    getFilePath: () => "D:\\Papers\\Old Duplicate.md"
+  });
+  attachmentByID.set(101, indexedAttachment);
   assert.strictEqual(PaperBridge.Notes.getNoteAttachment(mockItem), null);
 
   const originalRunProcessForOpen = PaperBridge.Util.runProcess;
@@ -1958,6 +2591,48 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.deepStrictEqual(failedRankTags.map(entry => entry.tag).sort(), ["paperbridge/rank/2", "topic/ml"]);
   assert.strictEqual(PaperBridge.Index.get(failedRankItem), null);
 
+  const wrongRankPath = "D:\\Papers\\Wrong Rank Sync.md";
+  const wrongRankContent = validMarkdown.replace('zotero_key: "ABCD1234"', 'zotero_key: "OTHERKEY"');
+  const wrongRankTags = [{ tag: "paperbridge/rank/1" }];
+  const wrongRankItem = Object.assign({}, mockItem, {
+    id: 178,
+    key: "RANKWRG",
+    getTags() {
+      return wrongRankTags.map(tag => Object.assign({}, tag));
+    },
+    addTag(tag) {
+      if (!wrongRankTags.some(entry => entry.tag === tag)) {
+        wrongRankTags.push({ tag });
+      }
+    },
+    removeTag(tag) {
+      const index = wrongRankTags.findIndex(entry => entry.tag === tag);
+      if (index >= 0) {
+        wrongRankTags.splice(index, 1);
+      }
+    },
+    getAttachments() {
+      return [17801];
+    },
+    async saveTx() {}
+  });
+  attachmentByID.set(17801, {
+    isAttachment: () => true,
+    getField: () => PaperBridge.Settings.noteAttachmentTitle(),
+    getFilePath: () => wrongRankPath
+  });
+  pathTypes.set(wrongRankPath, "regular");
+  fileContentsByPath.set(wrongRankPath, wrongRankContent);
+  PaperBridge.Notes.frontmatterValidationCache.set(PaperBridge.Notes.frontmatterCacheKey(wrongRankPath, wrongRankItem), {
+    modifiedTime: 123,
+    ok: true
+  });
+  assert.strictEqual(PaperBridge.Notes.getNoteState(wrongRankItem), PaperBridge.Constants.noteStates.ready);
+  await PaperBridge.Ranks.setRank(wrongRankItem, "2");
+  assert.deepStrictEqual(wrongRankTags.map(entry => entry.tag), ["paperbridge/rank/2"]);
+  assert.strictEqual(fileContentsByPath.get(wrongRankPath), wrongRankContent);
+  assert.strictEqual(PaperBridge.Notes.getNoteState(wrongRankItem), PaperBridge.Constants.noteStates.missing);
+
   const syncedTags = [
     { tag: "paperbridge/rank/1" },
     { tag: "paperbridge/status/unread" }
@@ -2234,13 +2909,54 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.ok(noteFileContent.includes('primary_collection: "Old Collection"'));
   assert.strictEqual(PaperBridge.Index.get(itemWithoutAttachment).note_path, "D:\\Papers\\Existing.md");
 
+  const relinkCollectionItem = Object.assign({}, itemWithoutAttachment, {
+    getCollections() {
+      return [7];
+    }
+  });
   noteFileContent = "Body only";
   linkedAttachmentPayload = null;
-  await PaperBridge.Notes.relinkMarkdownNote(itemWithoutAttachment, "D:\\Papers\\Relinked.md", { name: "Relinked Collection" });
+  await PaperBridge.Notes.relinkMarkdownNote(relinkCollectionItem, "D:\\Papers\\Relinked.md", collectionsByID.get(7));
   assert.strictEqual(linkedAttachmentPayload.file, "D:\\Papers\\Relinked.md");
   assert.ok(noteFileContent.startsWith("---\n"));
-  assert.ok(noteFileContent.includes('primary_collection: "Relinked Collection"'));
-  assert.strictEqual(PaperBridge.Index.get(itemWithoutAttachment).note_path, "D:\\Papers\\Relinked.md");
+  assert.ok(noteFileContent.includes('primary_collection: "Inbox"'));
+  assert.strictEqual(PaperBridge.Index.get(relinkCollectionItem).note_path, "D:\\Papers\\Relinked.md");
+
+  const relinkStateTags = [];
+  let relinkStateSaveCount = 0;
+  const relinkStateItem = Object.assign({}, mockItem, {
+    id: 177,
+    key: "RELNKST1",
+    getTags() {
+      return relinkStateTags.map(tag => Object.assign({}, tag));
+    },
+    addTag(tag) {
+      if (!relinkStateTags.some(entry => entry.tag === tag)) {
+        relinkStateTags.push({ tag });
+      }
+    },
+    removeTag(tag) {
+      const index = relinkStateTags.findIndex(entry => entry.tag === tag);
+      if (index >= 0) {
+        relinkStateTags.splice(index, 1);
+      }
+    },
+    getAttachments() {
+      return [];
+    },
+    async saveTx(options) {
+      relinkStateSaveCount++;
+      assert.strictEqual(options?.skipDateModifiedUpdate, true);
+    }
+  });
+  noteFileContent = "Existing reading note body";
+  linkedAttachmentPayload = null;
+  await PaperBridge.Notes.relinkMarkdownNote(relinkStateItem, "D:\\Papers\\Relinked State.md", { name: "State Collection" });
+  assert.ok(noteFileContent.includes("Existing reading note body"));
+  assert.strictEqual(PaperBridge.Notes.parseFrontmatter(noteFileContent).status, "unread");
+  assert.deepStrictEqual(relinkStateTags.map(entry => entry.tag), ["paperbridge/status/unread"]);
+  assert.strictEqual(relinkStateSaveCount, 1);
+
   const failingAttachPath = "D:\\Papers\\Attach Failure Existing.md";
   fileContentsByPath.set(failingAttachPath, validMarkdown);
   prefs.set("extensions.paperbridge.index", "{}");
@@ -2396,6 +3112,8 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   const createFailPath = PaperBridge.Index.get(createFailItem).note_path;
   assert.ok(createFailPath.endsWith("lovelace2026_attachment - Attachment Failure Paper.md"));
   assert.ok(fileContentsByPath.has(createFailPath));
+  assert.ok(!fileContentsByPath.get(createFailPath).includes("## 一句话总结"));
+  assert.ok(!fileContentsByPath.get(createFailPath).includes("## 研究问题"));
   assert.strictEqual(linkedAttachmentPayload, null);
   assert.strictEqual(PaperBridge.Notes.getNoteState(createFailItem), PaperBridge.Constants.noteStates.missing);
 
@@ -2406,6 +3124,50 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(linkedAttachmentPayload.file, createFailPath);
   assert.strictEqual([...fileContentsByPath.keys()].some(filePath => filePath.includes("Attachment Failure Paper (2).md")), false);
 
+  const createCollectionTags = [];
+  const createWrongSelectedCollectionItem = Object.assign({}, mockItem, {
+    id: 89,
+    key: "CREATECOL",
+    firstCreator: "Hamilton",
+    getField(field) {
+      return {
+        title: "Selected Collection Safety",
+        date: "2026",
+        extra: ""
+      }[field] || "";
+    },
+    getCollections() {
+      return [7];
+    },
+    getAttachments() {
+      return [];
+    },
+    getTags() {
+      return createCollectionTags.map(tag => Object.assign({}, tag));
+    },
+    addTag(tag) {
+      if (!createCollectionTags.some(entry => entry.tag === tag)) {
+        createCollectionTags.push({ tag });
+      }
+    },
+    removeTag(tag) {
+      const index = createCollectionTags.findIndex(entry => entry.tag === tag);
+      if (index >= 0) {
+        createCollectionTags.splice(index, 1);
+      }
+    },
+    async saveTx() {}
+  });
+  linkedAttachmentPayload = null;
+  const safeCreatePath = await PaperBridge.Notes.createNoteForItem(createWrongSelectedCollectionItem, {
+    collection: collectionsByID.get(8)
+  });
+  assert.ok(safeCreatePath.startsWith("D:\\Papers\\Inbox\\"));
+  assert.strictEqual(PaperBridge.Notes.parseFrontmatter(fileContentsByPath.get(safeCreatePath)).primary_collection, "Inbox");
+  assert.strictEqual(PaperBridge.Index.get(createWrongSelectedCollectionItem).primary_collection, "Inbox");
+  assert.strictEqual(linkedAttachmentPayload.file, safeCreatePath);
+  assert.strictEqual([...fileContentsByPath.keys()].some(filePath => filePath.startsWith("D:\\Papers\\Ignored\\") && filePath.includes("Selected Collection Safety")), false);
+
   const moveSource = "D:\\Papers\\Old\\Move.md";
   const moveTarget = "D:\\Papers\\Target\\Move.md";
   const moveOriginal = validMarkdown
@@ -2415,22 +3177,55 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     .replace('zotero: "zotero://select/library/items/ABCD1234"', 'zotero: "zotero://select/library/items/MOVE01"');
   const movingItem = Object.assign({}, mockItem, {
     key: "MOVE01",
+    getCollections() {
+      return [10];
+    },
     getAttachments() {
       return [];
     }
   });
+  collectionsByID.set(10, { id: 10, name: "Target" });
   prefs.set("extensions.paperbridge.index", JSON.stringify({
     MOVE01: { note_path: moveSource }
   }));
   pathTypes.set("D:\\Papers\\Old", "directory");
   pathTypes.set(moveSource, "regular");
   fileContentsByPath.set(moveSource, moveOriginal);
+
+  const wrongCollectionMovePath = "D:\\Papers\\Old\\Move Wrong Collection.md";
+  const wrongCollectionMoveTarget = "D:\\Papers\\Target\\Move Wrong Collection.md";
+  const wrongCollectionMoveContent = moveOriginal
+    .replace('zotero_key: "MOVE01"', 'zotero_key: "MOVE02"')
+    .replace("zotero://select/library/items/MOVE01", "zotero://select/library/items/MOVE02");
+  const wrongCollectionMoveItem = Object.assign({}, movingItem, {
+    key: "MOVE02",
+    getCollections() {
+      return [7];
+    }
+  });
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    MOVE02: { note_path: wrongCollectionMovePath }
+  }));
+  pathTypes.set(wrongCollectionMovePath, "regular");
+  fileContentsByPath.set(wrongCollectionMovePath, wrongCollectionMoveContent);
+  await assert.rejects(
+    () => PaperBridge.Notes.moveNoteToCollection(wrongCollectionMoveItem, collectionsByID.get(10)),
+    /does not belong/
+  );
+  assert.strictEqual(pathTypes.has(wrongCollectionMovePath), true);
+  assert.strictEqual(pathTypes.has(wrongCollectionMoveTarget), false);
+  assert.strictEqual(fileContentsByPath.get(wrongCollectionMovePath), wrongCollectionMoveContent);
+  assert.strictEqual(PaperBridge.Index.get(wrongCollectionMoveItem).note_path, wrongCollectionMovePath);
+
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    MOVE01: { note_path: moveSource }
+  }));
   const originalAttachMarkdownNote = PaperBridge.Notes.attachMarkdownNote;
   PaperBridge.Notes.attachMarkdownNote = async () => {
     throw new Error("attach failed");
   };
   await assert.rejects(
-    () => PaperBridge.Notes.moveNoteToCollection(movingItem, { name: "Target" }),
+    () => PaperBridge.Notes.moveNoteToCollection(movingItem, collectionsByID.get(10)),
     /attach failed/
   );
   assert.strictEqual(pathTypes.has(moveSource), true);
@@ -2663,6 +3458,9 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
         extra: ""
       }[field] || "";
     },
+    getCollections() {
+      return [9, 7];
+    },
     getAttachments() {
       return [];
     }
@@ -2686,6 +3484,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   });
   assert.strictEqual(linkedAttachmentPayload.file, legacyPath);
   assert.ok(fileContentsByPath.get(legacyPath).includes('zotero_key: "LEGACY01"'));
+  assert.ok(fileContentsByPath.get(legacyPath).includes('primary_collection: "Inbox"'));
 
   fileContentsByPath.set(legacyPath, legacyMarkdown);
   context.getAllItemsResult = ["77"];
@@ -2812,6 +3611,10 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   prefs.set("extensions.paperbridge.ignoreCollections", "");
   assert.strictEqual(PaperBridge.Notifications.shouldAutoCreateForCollection(collectionsByID.get(7)), true);
   assert.strictEqual(PaperBridge.Notifications.autoCreateCollectionForItem(filteredItem, null), collectionsByID.get(8));
+  const originalSelectedCollectionForNotifications = PaperBridge.Util.getSelectedCollection;
+  PaperBridge.Util.getSelectedCollection = () => collectionsByID.get(7);
+  assert.strictEqual(PaperBridge.Notifications.autoCreateCollectionForItem(filteredItem, null), collectionsByID.get(7));
+  PaperBridge.Util.getSelectedCollection = originalSelectedCollectionForNotifications;
   assert.deepStrictEqual(PaperBridge.Notifications.collectionIDsForItem(stringCollectionIDItem), [7]);
   assert.strictEqual(PaperBridge.Notifications.collectionForItem(stringCollectionIDItem, "7"), collectionsByID.get(7));
 
@@ -2850,6 +3653,36 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   PaperBridge.Notifications.scheduleItem(0, 7, 60000);
   assert.strictEqual(PaperBridge.Notifications.pending.has(0), false);
   PaperBridge.Notifications.stop();
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:DELETED1": {
+      note_path: "D:/Papers/Deleted.md",
+      zotero_key: "DELETED1",
+      item_id: 998,
+      library_id: 1
+    },
+    "1:EXTRADEL": {
+      note_path: "D:/Papers/Extra Deleted.md",
+      zotero_key: "EXTRADEL",
+      item_id: 997,
+      library_id: 1
+    }
+  }));
+  assert.strictEqual(PaperBridge.Notifications.removeIndexEntriesForItemIDs([998], {}), true);
+  assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index"))["1:DELETED1"], undefined);
+  PaperBridge.Notifications.notify("delete", "item", [], {
+    a: { key: "EXTRADEL", libraryID: 1 }
+  });
+  assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index"))["1:EXTRADEL"], undefined);
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:DELETED1": {
+      note_path: "D:/Papers/Deleted.md",
+      zotero_key: "DELETED1",
+      item_id: 998,
+      library_id: 1
+    }
+  }));
+  PaperBridge.Notifications.notify("modify", "item", [998], {});
+  assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index"))["1:DELETED1"], undefined);
 
   const autoRetryTags = [];
   const autoRetryItem = Object.assign({}, mockItem, {
@@ -3022,6 +3855,9 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     deleted: false,
     async saveTx() {
       deleteOrder.push(`save:${this.deleted}`);
+      if (this.deleted) {
+        PaperBridge.Index.remove(this);
+      }
     }
   });
   prefs.set("extensions.paperbridge.index", JSON.stringify({

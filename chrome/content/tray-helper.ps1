@@ -3,6 +3,7 @@ param(
     [int]$ZoteroPid = 0,
     [string]$ZoteroExe = "",
     [string]$Token = "",
+    [string]$QuitRequestPath = "",
     [switch]$SelfTest
 )
 
@@ -35,7 +36,13 @@ public static class PaperBridgeWin32 {
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetProcessDPIAware();
 
     public static IntPtr[] FindWindowsForProcess(int processId, bool visibleOnly) {
         var windows = new List<IntPtr>();
@@ -57,20 +64,88 @@ if ($SelfTest) {
     exit 0
 }
 
-if ($ZoteroPid -le 0) {
-    $process = Get-Process -Name zotero -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($process) {
-        $ZoteroPid = $process.Id
+[void][PaperBridgeWin32]::SetProcessDPIAware()
+[System.Windows.Forms.Application]::EnableVisualStyles()
+[System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
+
+function Normalize-PathForCompare {
+    param([string]$Path)
+
+    if (!$Path) {
+        return ""
     }
+    try {
+        return [System.IO.Path]::GetFullPath($Path).TrimEnd("\").ToLowerInvariant()
+    }
+    catch {
+        return ""
+    }
+}
+
+function Add-ProcessIfUnique {
+    param(
+        [System.Collections.ArrayList]$Processes,
+        [hashtable]$Seen,
+        [object]$Process
+    )
+
+    if (!$Process -or $Seen.ContainsKey([int]$Process.Id)) {
+        return
+    }
+    [void]$Seen.Add([int]$Process.Id, $true)
+    [void]$Processes.Add($Process)
+}
+
+function Get-ZoteroProcesses {
+    $processes = [System.Collections.ArrayList]::new()
+    $seen = @{}
+
+    if ($ZoteroPid -gt 0) {
+        Add-ProcessIfUnique -Processes $processes -Seen $seen -Process (Get-Process -Id $ZoteroPid -ErrorAction SilentlyContinue)
+    }
+
+    foreach ($process in @(Get-Process -Name zotero -ErrorAction SilentlyContinue)) {
+        Add-ProcessIfUnique -Processes $processes -Seen $seen -Process $process
+    }
+
+    $expectedPath = Normalize-PathForCompare $ZoteroExe
+    if (!$expectedPath) {
+        return @($processes)
+    }
+
+    $matching = @()
+    foreach ($process in @($processes)) {
+        $processPath = ""
+        try {
+            $processPath = $process.Path
+        }
+        catch {}
+        if ((Normalize-PathForCompare $processPath) -eq $expectedPath) {
+            $matching += $process
+        }
+    }
+
+    if ($matching.Count -gt 0) {
+        return $matching
+    }
+    return @($processes)
 }
 
 function Get-ZoteroWindows {
     param([switch]$VisibleOnly)
 
-    if ($ZoteroPid -le 0) {
-        return @()
+    $windows = @()
+    $seen = @{}
+    foreach ($process in @(Get-ZoteroProcesses)) {
+        foreach ($hwnd in @([PaperBridgeWin32]::FindWindowsForProcess([int]$process.Id, [bool]$VisibleOnly))) {
+            $key = $hwnd.ToInt64()
+            if (!$seen.ContainsKey($key)) {
+                $seen[$key] = $true
+                $windows += $hwnd
+            }
+        }
     }
-    return [PaperBridgeWin32]::FindWindowsForProcess($ZoteroPid, [bool]$VisibleOnly)
+    return $windows
 }
 
 function Hide-Zotero {
@@ -116,6 +191,28 @@ function Toggle-Zotero {
     }
 }
 
+function Request-Zotero-Quit {
+    if ($QuitRequestPath) {
+        try {
+            $directory = [System.IO.Path]::GetDirectoryName($QuitRequestPath)
+            if ($directory -and !(Test-Path -LiteralPath $directory)) {
+                [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+            }
+            [System.IO.File]::WriteAllText($QuitRequestPath, $Token, [System.Text.Encoding]::UTF8)
+        }
+        catch {}
+    }
+
+    $windows = @(Get-ZoteroWindows)
+    foreach ($hwnd in $windows) {
+        [void][PaperBridgeWin32]::ShowWindow($hwnd, 9)
+        [void][PaperBridgeWin32]::PostMessage($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+    }
+
+    Stop-Helper
+    return $true
+}
+
 $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse("127.0.0.1"), $Port)
 $listener.Start()
 
@@ -156,14 +253,11 @@ catch {
 }
 
 $menu = [System.Windows.Forms.ContextMenuStrip]::new()
-$showItem = [System.Windows.Forms.ToolStripMenuItem]::new("Show Zotero")
-$hideItem = [System.Windows.Forms.ToolStripMenuItem]::new("Hide Zotero")
-$exitItem = [System.Windows.Forms.ToolStripMenuItem]::new("Exit tray helper")
+$showItem = [System.Windows.Forms.ToolStripMenuItem]::new("Open Zotero")
+$exitItem = [System.Windows.Forms.ToolStripMenuItem]::new("Quit Zotero")
 $showItem.add_Click({ Show-Zotero })
-$hideItem.add_Click({ Hide-Zotero })
-$exitItem.add_Click({ Stop-Helper -RestoreZotero $true })
+$exitItem.add_Click({ Request-Zotero-Quit })
 [void]$menu.Items.Add($showItem)
-[void]$menu.Items.Add($hideItem)
 [void]$menu.Items.Add($exitItem)
 $tray.ContextMenuStrip = $menu
 $tray.add_MouseClick({
@@ -231,6 +325,7 @@ function Handle-Command {
         "show" { return Show-Zotero }
         "toggle" { return Toggle-Zotero }
         "ping" { return $true }
+        "quit-zotero" { return Request-Zotero-Quit }
         "quit-helper" {
             Stop-Helper
             return $true
@@ -243,9 +338,9 @@ $timer = [System.Windows.Forms.Timer]::new()
 $timer.Interval = 250
 $timer.add_Tick({
     $script:processCheckTicks++
-    if ($ZoteroPid -gt 0 -and $script:processCheckTicks -ge 20) {
+    if ($script:processCheckTicks -ge 20) {
         $script:processCheckTicks = 0
-        if (!(Get-Process -Id $ZoteroPid -ErrorAction SilentlyContinue)) {
+        if (@(Get-ZoteroProcesses).Count -eq 0) {
             Stop-Helper
             return
         }

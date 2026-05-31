@@ -41,12 +41,23 @@ PaperBridge.Notifications = {
   },
 
   notify(event, type, ids, extraData) {
+    if (type === "item" && (event === "delete" || event === "trash")) {
+      this.removeIndexEntriesForItemIDs(ids, extraData);
+      return;
+    }
+
     if (!PaperBridge.Settings.getBool("autoCreate", true)) {
       return;
     }
 
     if (type === "item" && (event === "add" || event === "modify")) {
       for (const id of ids) {
+        const item = Zotero.Items.get(Number(id));
+        if (item?.deleted) {
+          PaperBridge.Index.remove(item);
+          PaperBridge.Util.refreshItemTreeColumns();
+          continue;
+        }
         this.scheduleItem(id);
       }
     }
@@ -82,6 +93,11 @@ PaperBridge.Notifications = {
 
   async tryAutoCreate(itemID, collectionID = null) {
     const item = Zotero.Items.get(itemID);
+    if (item?.deleted) {
+      PaperBridge.Index.remove(item);
+      PaperBridge.Util.refreshItemTreeColumns();
+      return;
+    }
     if (!item || !PaperBridge.Notes.isRegularItem(item) || item.deleted) {
       return;
     }
@@ -120,6 +136,26 @@ PaperBridge.Notifications = {
     }
     const path = PaperBridge.Notes.getNotePath(item);
     return Boolean(path && PaperBridge.Util.pathExistsSync(path));
+  },
+
+  removeIndexEntriesForItemIDs(ids, extraData = {}) {
+    let changed = false;
+    for (const id of ids || []) {
+      changed = PaperBridge.Index.removeByItemID(id) || changed;
+    }
+
+    for (const value of Object.values(extraData || {})) {
+      const key = value?.key || value?.itemKey || value?.item?.key || value?.old?.key;
+      const libraryID = value?.libraryID || value?.library?.libraryID || value?.item?.libraryID || value?.old?.libraryID;
+      if (key) {
+        changed = PaperBridge.Index.removeByLibraryAndKey(libraryID, key) || changed;
+      }
+    }
+
+    if (changed) {
+      PaperBridge.Util.refreshItemTreeColumns();
+    }
+    return changed;
   },
 
   retryItem(itemID, collectionID, reason = "metadata is still incomplete") {
@@ -167,7 +203,20 @@ PaperBridge.Notifications = {
     if (preferredCollection) {
       return this.shouldAutoCreateForCollection(preferredCollection) ? preferredCollection : null;
     }
+    const selectedCollection = this.selectedCollectionForItem(item);
+    if (selectedCollection) {
+      return this.shouldAutoCreateForCollection(selectedCollection) ? selectedCollection : null;
+    }
     return this.collectionsForItem(item).find(collection => this.shouldAutoCreateForCollection(collection)) || null;
+  },
+
+  selectedCollectionForItem(item) {
+    const selected = PaperBridge.Util.getSelectedCollection();
+    const selectedID = this.positiveIntegerID(selected?.id);
+    if (!selectedID || !this.collectionIDSetForItem(item).has(selectedID)) {
+      return null;
+    }
+    return PaperBridge.Notes.resolveCollection(selectedID) || selected;
   },
 
   shouldAutoCreateForCollection(collection) {

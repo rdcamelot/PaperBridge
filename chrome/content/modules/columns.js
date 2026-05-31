@@ -22,6 +22,7 @@ PaperBridge.Columns = {
         keys.push(key);
       }
       this.registeredKeys = keys;
+      await this.ensureColumnsVisible();
     }
     catch (error) {
       this.registeredKeys = keys;
@@ -37,6 +38,8 @@ PaperBridge.Columns = {
         label: "笔记",
         pluginID: PaperBridge.id,
         enabledTreeIDs: ["main"],
+        hidden: false,
+        showInColumnPicker: true,
         width: "48",
         fixedWidth: true,
         staticWidth: true,
@@ -51,6 +54,8 @@ PaperBridge.Columns = {
         label: "等级",
         pluginID: PaperBridge.id,
         enabledTreeIDs: ["main"],
+        hidden: false,
+        showInColumnPicker: true,
         width: "48",
         fixedWidth: true,
         staticWidth: true,
@@ -63,6 +68,140 @@ PaperBridge.Columns = {
         zoteroPersist: ["width", "hidden", "sortDirection"]
       }
     ];
+  },
+
+  async ensureColumnsVisible() {
+    const keys = this.registeredKeys.filter(Boolean);
+    if (!keys.length) {
+      return;
+    }
+
+    try {
+      await this.ensureTreePrefsVisible(keys);
+    }
+    catch (error) {
+      PaperBridge.Util.safeLogError(error);
+    }
+
+    try {
+      this.ensureRuntimeColumnsVisible(keys);
+    }
+    catch (error) {
+      PaperBridge.Util.safeLogError(error);
+    }
+
+    PaperBridge.Util.refreshItemTreeColumns();
+  },
+
+  async ensureTreePrefsVisible(keys) {
+    const prefsPath = this.treePrefsPath();
+    if (!prefsPath || !Zotero.File?.getContentsAsync || !Zotero.File?.putContentsAsync) {
+      return false;
+    }
+    if (IOUtils.exists && !(await IOUtils.exists(prefsPath))) {
+      return false;
+    }
+
+    const raw = await Zotero.File.getContentsAsync(prefsPath);
+    if (!String(raw || "").trim()) {
+      return false;
+    }
+
+    const prefs = JSON.parse(raw);
+    let changed = false;
+    for (const treePrefs of Object.values(prefs || {})) {
+      if (!treePrefs || typeof treePrefs !== "object") {
+        continue;
+      }
+      for (const key of keys) {
+        const entry = treePrefs[key];
+        if (entry && typeof entry === "object" && entry.hidden !== false) {
+          entry.hidden = false;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      await Zotero.File.putContentsAsync(prefsPath, JSON.stringify(prefs));
+    }
+    return changed;
+  },
+
+  treePrefsPath() {
+    const profileDir = Zotero.Profile?.dir;
+    return profileDir ? PaperBridge.Util.pathJoin(profileDir, "treePrefs.json") : "";
+  },
+
+  ensureRuntimeColumnsVisible(keys) {
+    for (const window of Zotero.getMainWindows?.() || []) {
+      this.ensureWindowColumnsVisible(window, keys);
+    }
+  },
+
+  ensureWindowColumnsVisible(window, keys) {
+    const itemTree = window?.ZoteroPane?.itemsView
+      || window?.ZoteroPane?.itemTree
+      || window?.ZoteroPane?.itemsTree;
+    if (!itemTree) {
+      return false;
+    }
+    const keySet = new Set(keys);
+    let changed = false;
+
+    for (const collection of [
+      itemTree._columns,
+      itemTree.columns,
+      itemTree.state?.columns,
+      itemTree.props?.columns
+    ]) {
+      changed = this.markColumnsVisible(collection, keySet) || changed;
+    }
+
+    for (const prefs of [
+      itemTree._columnPrefs,
+      itemTree.columnPrefs,
+      itemTree.state?.columnPrefs
+    ]) {
+      changed = this.markColumnPrefsVisible(prefs, keySet) || changed;
+    }
+
+    if (changed) {
+      itemTree._columnsId = null;
+      itemTree.tree?.invalidate?.();
+      itemTree.forceUpdate?.();
+      itemTree.refreshAndMaintainSelection?.();
+    }
+    return changed;
+  },
+
+  markColumnsVisible(collection, keySet) {
+    if (!collection) {
+      return false;
+    }
+    const columns = Array.isArray(collection) ? collection : Object.values(collection);
+    let changed = false;
+    for (const column of columns) {
+      if (column && keySet.has(column.dataKey) && column.hidden !== false) {
+        column.hidden = false;
+        changed = true;
+      }
+    }
+    return changed;
+  },
+
+  markColumnPrefsVisible(prefs, keySet) {
+    if (!prefs || typeof prefs !== "object") {
+      return false;
+    }
+    let changed = false;
+    for (const key of keySet) {
+      const entry = prefs[key];
+      if (entry && typeof entry === "object" && entry.hidden !== false) {
+        entry.hidden = false;
+        changed = true;
+      }
+    }
+    return changed;
   },
 
   async unregister() {

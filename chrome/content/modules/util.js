@@ -6,20 +6,25 @@ PaperBridge.Util = {
   },
 
   logError(error) {
-    Zotero.logError(error);
-  },
-
-  safeLogError(error) {
     try {
-      this.logError(error);
+      if (Zotero.logError) {
+        Zotero.logError(error);
+      }
+      else {
+        this.log(error?.message || String(error));
+      }
     }
     catch (logError) {
       try {
-        Zotero.debug(`PaperBridge: Could not log error: ${logError.message}`);
+        Zotero.debug(`PaperBridge: Could not log error: ${logError.message || logError}`);
       }
-      catch (debugError) {
+      catch (_debugError) {
       }
     }
+  },
+
+  safeLogError(error) {
+    this.logError(error);
   },
 
   alert(message, title = "PaperBridge") {
@@ -28,6 +33,21 @@ PaperBridge.Util = {
 
   confirm(message, title = "PaperBridge") {
     return Services.prompt.confirm(null, title, message);
+  },
+
+  copyTextToClipboard(text) {
+    try {
+      const helper = Cc["@mozilla.org/widget/clipboardhelper;1"]?.getService?.(Ci.nsIClipboardHelper);
+      if (!helper?.copyString) {
+        return false;
+      }
+      helper.copyString(String(text ?? ""));
+      return true;
+    }
+    catch (error) {
+      this.safeLogError(error);
+      return false;
+    }
   },
 
   todayISO() {
