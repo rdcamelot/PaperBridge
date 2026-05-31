@@ -1,0 +1,106 @@
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml"
+      id="paperbridge-preferences"
+      onload="PaperBridgePreferences.init()">
+  <linkset>
+    <html:link rel="localization" href="paperbridge.ftl" />
+  </linkset>
+
+  <groupbox data-search-strings-raw="PaperBridge, Markdown, Typora, editor, filename, citekey, 根目录, 编辑器, 文件名">
+    <label><html:h2 data-l10n-id="paperbridge-pref-section-general"></html:h2></label>
+    <html:div class="paperbridge-pref-grid">
+      <html:label for="paperbridge-markdown-root"
+                  data-l10n-id="paperbridge-pref-markdown-root"></html:label>
+      <html:input id="paperbridge-markdown-root"
+                  preference="extensions.paperbridge.markdownRoot"
+                  type="text" />
+
+      <html:label for="paperbridge-editor-path"
+                  data-l10n-id="paperbridge-pref-editor-path"></html:label>
+      <html:input id="paperbridge-editor-path"
+                  preference="extensions.paperbridge.markdownEditorPath"
+                  type="text"
+                  data-l10n-id="paperbridge-pref-editor-path-input" />
+
+      <html:label for="paperbridge-filename-template"
+                  data-l10n-id="paperbridge-pref-filename-template"></html:label>
+      <html:input id="paperbridge-filename-template"
+                  preference="extensions.paperbridge.filenameTemplate"
+                  type="text" />
+
+      <html:label for="paperbridge-fallback-citekey-pattern"
+                  data-l10n-id="paperbridge-pref-fallback-citekey-pattern"></html:label>
+      <html:input id="paperbridge-fallback-citekey-pattern"
+                  preference="extensions.paperbridge.fallbackCitekeyPattern"
+                  type="text"
+                  data-l10n-id="paperbridge-pref-fallback-citekey-pattern-input" />
+
+      <html:label for="paperbridge-max-filename-length"
+                  data-l10n-id="paperbridge-pref-max-filename-length"></html:label>
+      <html:input id="paperbridge-max-filename-length"
+                  preference="extensions.paperbridge.maxFilenameLength"
+                  type="number"
+                  min="80"
+                  max="240" />
+    </html:div>
+  </groupbox>
+
+  <groupbox data-search-strings-raw="automation, Better BibTeX, BBT, collection, linked attachment, 自动化, 自动创建, 分类, 绑定">
+    <label><html:h2 data-l10n-id="paperbridge-pref-section-automation"></html:h2></label>
+    <checkbox data-l10n-id="paperbridge-pref-use-better-bibtex"
+              preference="extensions.paperbridge.useBetterBibTeXCitekey" />
+    <checkbox data-l10n-id="paperbridge-pref-auto-create"
+              preference="extensions.paperbridge.autoCreate" />
+    <checkbox data-l10n-id="paperbridge-pref-attach-linked-note"
+              preference="extensions.paperbridge.attachLinkedNote" />
+    <html:div class="paperbridge-pref-grid">
+      <html:label for="paperbridge-auto-only-collections"
+                  data-l10n-id="paperbridge-pref-auto-only-collections"></html:label>
+      <html:input id="paperbridge-auto-only-collections"
+                  preference="extensions.paperbridge.autoCreateOnlyCollections"
+                  type="text"
+                  data-l10n-id="paperbridge-pref-auto-only-collections-input" />
+
+      <html:label for="paperbridge-ignore-collections"
+                  data-l10n-id="paperbridge-pref-ignore-collections"></html:label>
+      <html:input id="paperbridge-ignore-collections"
+                  preference="extensions.paperbridge.ignoreCollections"
+                  type="text"
+                  data-l10n-id="paperbridge-pref-ignore-collections-input" />
+    </html:div>
+  </groupbox>
+
+  <groupbox data-search-strings-raw="Windows tray, close to tray, minimize, helper, 托盘, 最小化, 隐藏, 关闭">
+    <label><html:h2 data-l10n-id="paperbridge-pref-section-tray"></html:h2></label>
+    <checkbox data-l10n-id="paperbridge-pref-close-to-tray"
+              preference="extensions.paperbridge.closeToTray" />
+    <checkbox data-l10n-id="paperbridge-pref-tray-auto-hide"
+              preference="extensions.paperbridge.trayAutoHideOnStartup" />
+    <html:div class="paperbridge-pref-grid">
+      <html:label for="paperbridge-tray-port"
+                  data-l10n-id="paperbridge-pref-tray-port"></html:label>
+      <html:input id="paperbridge-tray-port"
+                  preference="extensions.paperbridge.trayPort"
+                  type="number"
+                  min="1024"
+                  max="65535" />
+    </html:div>
+  </groupbox>
+
+  <groupbox data-search-strings-raw="tag, rank, status, prefix, 标签, 等级, 状态, 前缀">
+    <label><html:h2 data-l10n-id="paperbridge-pref-section-tags"></html:h2></label>
+    <html:div class="paperbridge-pref-grid">
+      <html:label for="paperbridge-rank-tag-prefix"
+                  data-l10n-id="paperbridge-pref-rank-tag-prefix"></html:label>
+      <html:input id="paperbridge-rank-tag-prefix"
+                  preference="extensions.paperbridge.rankTagPrefix"
+                  type="text" />
+
+      <html:label for="paperbridge-status-tag-prefix"
+                  data-l10n-id="paperbridge-pref-status-tag-prefix"></html:label>
+      <html:input id="paperbridge-status-tag-prefix"
+                  preference="extensions.paperbridge.statusTagPrefix"
+                  type="text" />
+    </html:div>
+  </groupbox>
+</vbox>

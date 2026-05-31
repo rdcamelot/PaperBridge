@@ -1,0 +1,18 @@
+pref("extensions.paperbridge.markdownRoot", "D:\\\u5b66\\\u8bba\u6587");
+pref("extensions.paperbridge.markdownEditorPath", "");
+pref("extensions.paperbridge.filenameTemplate", "{{citekey}} - {{shortTitle}}.md");
+pref("extensions.paperbridge.useBetterBibTeXCitekey", true);
+pref("extensions.paperbridge.fallbackCitekeyPattern", "{{firstCreator}}{{year}}_{{firstTitleWord}}");
+pref("extensions.paperbridge.autoCreate", true);
+pref("extensions.paperbridge.autoCreateOnlyCollections", "");
+pref("extensions.paperbridge.ignoreCollections", "");
+pref("extensions.paperbridge.attachLinkedNote", true);
+pref("extensions.paperbridge.closeToTray", true);
+pref("extensions.paperbridge.trayAutoHideOnStartup", false);
+pref("extensions.paperbridge.trayPort", 23128);
+pref("extensions.paperbridge.trayToken", "");
+pref("extensions.paperbridge.maxFilenameLength", 180);
+pref("extensions.paperbridge.rankTagPrefix", "paperbridge/rank/");
+pref("extensions.paperbridge.statusTagPrefix", "paperbridge/status/");
+pref("extensions.paperbridge.noteAttachmentTitle", "Markdown Reading Note");
+pref("extensions.paperbridge.index", "{}");

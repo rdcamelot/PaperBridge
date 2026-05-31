@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "PaperBridge Diagnostic",
+  "version": "0.0.1",
+  "description": "Minimal Zotero plugin used to isolate local XPI installation failures.",
+  "author": "PaperBridge",
+  "applications": {
+    "zotero": {
+      "id": "paperbridge-diagnostic@example.com",
+      "update_url": "https://example.com/paperbridge-diagnostic/updates.json",
+      "strict_min_version": "6.999",
+      "strict_max_version": "11.*"
+    }
+  }
+}

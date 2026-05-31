@@ -1,0 +1,94 @@
+.paperbridge-pref-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(320px, 1fr);
+  gap: 8px 12px;
+  align-items: center;
+  margin: 8px 0 4px;
+}
+
+.paperbridge-pref-grid input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.paperbridge-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 24px;
+  min-height: 22px;
+  border-radius: 4px;
+  cursor: default;
+  font-weight: 600;
+  line-height: 1;
+  box-sizing: border-box;
+}
+
+.paperbridge-cell-action {
+  cursor: pointer;
+}
+
+.paperbridge-cell-action:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.paperbridge-note-missing,
+.paperbridge-rank-delete {
+  color: #b3261e;
+}
+
+.paperbridge-rank-core {
+  color: #0b6e4f;
+}
+
+.paperbridge-pane {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.paperbridge-pane-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.paperbridge-pane-row {
+  display: grid;
+  grid-template-columns: minmax(52px, max-content) minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.paperbridge-pane-label {
+  color: var(--fill-secondary, #5f6368);
+  font-weight: 600;
+}
+
+.paperbridge-pane-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paperbridge-pane-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.paperbridge-pane-button {
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.paperbridge-pane-button:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
