@@ -97,6 +97,40 @@
   white-space: nowrap;
 }
 
+.paperbridge-pane-summary {
+  display: grid;
+  gap: 6px;
+}
+
+.paperbridge-pane-summary-label {
+  color: var(--fill-secondary, #5f6368);
+  font-weight: 600;
+}
+
+.paperbridge-pane-summary-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 58px;
+  resize: vertical;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 4px;
+  padding: 6px 7px;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  color: inherit;
+  font: inherit;
+  line-height: 1.35;
+}
+
+.paperbridge-pane-summary-input:focus {
+  outline: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+  outline-offset: 1px;
+}
+
+.paperbridge-pane-summary-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .paperbridge-pane-rows {
   display: grid;
   gap: 6px;
@@ -153,8 +187,16 @@
   background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
+.paperbridge-pane-button-primary {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
 .paperbridge-pane-button:disabled,
 .paperbridge-pane-button-disabled {
   cursor: default;
   opacity: 0.55;
+}
+
+.paperbridge-pane-error {
+  color: #b3261e;
 }

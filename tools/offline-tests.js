@@ -379,7 +379,7 @@ async function runBootstrapLifecycleTests({ failStart = false, failUnregister = 
 
   const startupPayload = {
     id: "paperbridge@example.com",
-    version: "0.1.28",
+    version: "0.1.29",
     rootURI: "resource://paperbridge/"
   };
   await bootstrapContext.startup.call(bootstrapContext, startupPayload);
@@ -452,7 +452,7 @@ async function runBootstrapCleanupFailureTest() {
   vm.runInContext(fs.readFileSync(path.join(root, "bootstrap.js"), "utf8"), bootstrapContext, { filename: "bootstrap.js" });
   await bootstrapContext.startup.call(bootstrapContext, {
     id: "paperbridge@example.com",
-    version: "0.1.28",
+    version: "0.1.29",
     rootURI: "resource://paperbridge/"
   });
   await assert.doesNotReject(() => bootstrapContext.shutdown.call(bootstrapContext));
@@ -662,7 +662,7 @@ for (const [file, text] of [
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 assert.strictEqual(manifest.manifest_version, 2);
 assert.strictEqual(manifest.applications?.zotero?.id, "paperbridge@example.com");
-assert.strictEqual(manifest.version, "0.1.28");
+assert.strictEqual(manifest.version, "0.1.29");
 assert.strictEqual(manifest.applications?.zotero?.update_url, "https://example.com/paperbridge/updates.json");
 assert.strictEqual(manifest.applications?.zotero?.strict_min_version, "6.999");
 assert.strictEqual(manifest.applications?.zotero?.strict_max_version, "11.*");
@@ -1281,6 +1281,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     'zotero_key: "ABCD1234"',
     'collection: "Inbox"',
     'primary_collection: "Inbox"',
+    'summary: "Useful baseline for memory agents"',
     'status: unread',
     'zotero: "zotero://select/library/items/ABCD1234"',
     'created: "2026-05-30"',
@@ -1290,6 +1291,10 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     "Body"
   ].join("\n"));
   assert.strictEqual(PaperBridge.Notes.getNoteAttachment(mockItem), attachmentByID.get(101));
+  assert.strictEqual(PaperBridge.Notes.summaryForItem(mockItem), "Useful baseline for memory agents");
+  await PaperBridge.Notes.updateLinkedNoteSummary(mockItem, "Sharper summary");
+  assert.ok(fileContentsByPath.get("D:\\Papers\\Note.md").includes('summary: "Sharper summary"'));
+  assert.strictEqual(PaperBridge.Index.get(mockItem).summary, "Sharper summary");
   assert.strictEqual(PaperBridge.ItemPane.summaryForItem(mockItem), "Ready / Rank 1 / -");
   const originalRefreshColumnsForMonitor = PaperBridge.Util.refreshItemTreeColumns;
   let monitorRefreshes = 0;
@@ -1315,7 +1320,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-citekey" && row.value === "doe2024_a"));
   assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-file" && row.value === "Exists"));
   assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-attachment" && row.value === "Linked"));
-  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-updated" && row.value === "-"));
+  assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-updated" && row.value === "2026-05-31"));
   let itemPaneOptions = null;
   let unregisteredPaneID = null;
   let insertedFTL = "";
@@ -1432,7 +1437,11 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.ok(l10nAttributes.includes("paperbridge-item-pane-action-export-annotations"));
   const originalHandleNoteClickForPane = PaperBridge.Notes.handleNoteClick;
   const originalRefreshColumnsForPane = PaperBridge.Util.refreshItemTreeColumns;
-  const paneActions = testBody.children[0].children[3];
+  assert.ok(l10nAttributes.includes("paperbridge-item-pane-summary-label"));
+  assert.ok(l10nAttributes.includes("paperbridge-item-pane-action-save-summary"));
+  const summaryEditor = testBody.children[0].children[2];
+  assert.strictEqual(summaryEditor.children[1].value, "Sharper summary");
+  const paneActions = testBody.children[0].children[4];
   const openCreateButton = paneActions.children[0];
   const paneEvents = [];
   PaperBridge.Notes.handleNoteClick = async itemID => paneEvents.push(`open:${itemID}`);
@@ -1445,13 +1454,13 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(openCreateButton.disabled, true);
   assert.deepStrictEqual(paneEvents, ["prevent", "open:42", "refresh-columns"]);
   assert.strictEqual(testBody.children.length, 1);
-  assert.ok(testBody.children[0].children[3].children[0].listeners.click);
+  assert.ok(testBody.children[0].children[4].children[0].listeners.click);
   const originalPaneAlert = PaperBridge.Util.alert;
   let paneAlert = "";
   PaperBridge.Util.alert = message => {
     paneAlert = message;
   };
-  const refreshedPaneActions = testBody.children[0].children[3];
+  const refreshedPaneActions = testBody.children[0].children[4];
   PaperBridge.ItemPane.addActionButton(testDoc, refreshedPaneActions, mockItem, "Fail", "", () => {
     throw new Error("sync pane failure");
   });
@@ -1492,7 +1501,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(degradedPaneEnabled, true);
   assert.ok(degradedPaneSummary.includes("Unavailable"));
   assert.ok(l10nAttributes.includes("paperbridge-item-pane-value-unavailable"));
-  const degradedPaneActions = degradedPaneBody.children[0].children[3];
+  const degradedPaneActions = degradedPaneBody.children[0].children[4];
   assert.ok(degradedPaneActions.children.length >= 5);
   assert.ok(degradedPaneActions.children.every(button => button.disabled === true));
   PaperBridge.Notes = originalDegradedPaneNotes;
@@ -1505,7 +1514,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(unregisteredPaneID, "paperbridge-paperbridge");
   const previousDiagnosticsIndex = prefs.get("extensions.paperbridge.index");
   const originalDiagnosticsSendCommand = PaperBridge.Tray.sendCommand;
-  PaperBridge.version = "0.1.28";
+  PaperBridge.version = "0.1.29";
   PaperBridge.Tray.sendCommand = async command => command === "ping";
   prefs.set("extensions.paperbridge.closeToTray", "true");
   zoteroItemsByID.set(mockItem.id, mockItem);
@@ -1531,7 +1540,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     }
   }));
   const diagnosticsReport = await PaperBridge.Diagnostics.buildReport([mockItem]);
-  assert.ok(diagnosticsReport.includes("PaperBridge: 0.1.28"));
+  assert.ok(diagnosticsReport.includes("PaperBridge: 0.1.29"));
   assert.ok(diagnosticsReport.includes("stale/deleted/missing item entries: 1"));
   assert.ok(diagnosticsReport.includes("helper reachable: yes"));
   assert.ok(diagnosticsReport.includes("Item 42: A Study: On Invalid / Windows * Names"));
@@ -1556,7 +1565,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     diagnosticsAlert = message;
   };
   await PaperBridge.Diagnostics.showReport([mockItem]);
-  assert.ok(clipboardText.includes("PaperBridge: 0.1.28"));
+  assert.ok(clipboardText.includes("PaperBridge: 0.1.29"));
   assert.ok(diagnosticsAlert.includes("copied to the clipboard"));
   PaperBridge.Util.alert = originalDiagnosticsAlert;
   if (originalClipboardContract === undefined) {

@@ -512,6 +512,43 @@ PaperBridge.Notes = {
     return true;
   },
 
+  summaryForItem(item) {
+    const indexSummary = PaperBridge.Index.get(item)?.summary || "";
+    const path = this.getNotePath(item);
+    if (!path || !PaperBridge.Util.pathExistsSync(path) || typeof Zotero.File?.getContents !== "function") {
+      return indexSummary;
+    }
+
+    try {
+      const fields = this.parseFrontmatter(Zotero.File.getContents(path)) || {};
+      return fields.summary || fields.paperbridge_summary || indexSummary || "";
+    }
+    catch (error) {
+      PaperBridge.Util.safeLogError(error);
+      return indexSummary;
+    }
+  },
+
+  async updateLinkedNoteSummary(item, summary) {
+    if (!this.isRegularItem(item)) {
+      throw new Error("PaperBridge can save summaries only for regular Zotero items.");
+    }
+    const path = this.getNotePath(item) && PaperBridge.Util.pathExistsSync(this.getNotePath(item))
+      ? this.getNotePath(item)
+      : await this.createNoteForItem(item);
+    const text = String(summary || "").trim();
+    const content = await Zotero.File.getContentsAsync(path);
+    this.assertFrontmatterBelongsToItem(this.parseFrontmatter(content), item);
+    await Zotero.File.putContentsAsync(path, this.updateMarkdownFrontmatterContent(content, {
+      summary: text,
+      updated: PaperBridge.Util.todayISO()
+    }));
+    this.frontmatterValidationCache.delete(this.frontmatterCacheKey(path, item));
+    PaperBridge.Index.set(item, { summary: text });
+    PaperBridge.Util.refreshItemTreeColumns();
+    return path;
+  },
+
   updateMarkdownFrontmatterContent(content, updates) {
     const text = String(content || "");
     const lines = text.split(/\r?\n/);

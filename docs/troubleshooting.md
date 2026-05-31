@@ -123,6 +123,7 @@
 - 从 `0.1.26` 开始，PDF annotation 搜索回退也识别 `attachmentItemID`、`attachmentID`、`attachmentItemKey`、`attachmentKey` 和嵌套 attachment key，减少父附件字段名差异造成的漏导出。
 - 从 `0.1.27` 开始，PDF 附件识别统一使用 `attachmentContentType`、`contentType`、`getField("contentType")` 和 `.pdf` 路径兜底；frontmatter 的 `pdf` URI 与 annotation 导出会使用同一判断，避免只通过 getter 暴露 MIME 的 PDF 附件被漏掉。
 - 从 `0.1.28` 开始，PaperBridge item pane 的 sidenav 文案改为 tooltip-only，避免底部按钮显示超出边界的 `PaperBridge` 文本；面板补充下一步、PDF 概况和更新时间；启用 close-to-tray 时会在启动后预热 tray helper，降低第一次关闭时的等待和 PowerShell 窗口闪烁。
+- 从 `0.1.29` 开始，PaperBridge item pane 支持编辑“简短说明”，写入对应 Markdown frontmatter 的可选 `summary` 字段；面板渲染增加 XHTML element fallback 和错误兜底，避免回调异常时只剩空白内容。开发安装脚本在 `-CloseZotero` 时会先写入一次性退出请求，避免插件把脚本的关闭请求拦截成隐藏到托盘。
 
 ## Zotero 仍在运行旧包
 

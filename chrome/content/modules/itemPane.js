@@ -28,9 +28,15 @@ PaperBridge.ItemPane = {
       onRender: ({ doc, body, item, setEnabled, setSectionSummary }) => {
         const paneDoc = this.documentForPane(doc, body);
         this.ensureLocalization(paneDoc);
-        setEnabled?.(this.isRegularItem(item));
-        setSectionSummary?.(this.summaryForItem(item));
-        this.renderSection(paneDoc, body, item);
+        try {
+          setEnabled?.(this.isRegularItem(item));
+          setSectionSummary?.(this.summaryForItem(item));
+          this.renderSection(paneDoc, body, item);
+        }
+        catch (error) {
+          PaperBridge.Util.safeLogError(error);
+          this.renderError(paneDoc, body, error);
+        }
       }
     });
     return Boolean(this.registeredID);
@@ -71,6 +77,18 @@ PaperBridge.ItemPane = {
 
   documentForPane(doc, body) {
     return doc || body?.ownerDocument || body?.document || null;
+  },
+
+  createElement(doc, tagName) {
+    if (typeof doc?.createElementNS === "function") {
+      try {
+        return doc.createElementNS("http://www.w3.org/1999/xhtml", tagName);
+      }
+      catch (error) {
+        PaperBridge.Util?.safeLogError?.(error);
+      }
+    }
+    return doc.createElement(tagName);
   },
 
   ensureLocalization(doc) {
@@ -166,6 +184,7 @@ PaperBridge.ItemPane = {
     const noteState = this.safeValue(null, () => PaperBridge.Notes.getNoteState(item));
     const pdfAttachments = this.safeValue([], () => this.pdfAttachmentsForItem(item));
     const primaryPDF = pdfAttachments[0] || this.safeValue(null, () => PaperBridge.Notes.bestPDFAttachment(item));
+    const summary = this.safeValue("", () => PaperBridge.Notes.summaryForItem(item) || "");
     return {
       item,
       notePath,
@@ -179,6 +198,7 @@ PaperBridge.ItemPane = {
       pdfAttachments,
       pdfCount: pdfAttachments.length || (primaryPDF ? 1 : 0),
       primaryPDF,
+      summary,
       primaryCollection: index.primary_collection || index.collection || "-",
       updated: index.updated || "-"
     };
@@ -252,7 +272,7 @@ PaperBridge.ItemPane = {
       return;
     }
     body.textContent = "";
-    const container = doc.createElement("div");
+    const container = this.createElement(doc, "div");
     container.className = "paperbridge-pane";
     body.appendChild(container);
 
@@ -263,25 +283,27 @@ PaperBridge.ItemPane = {
 
     container.appendChild(this.renderStatusStrip(doc, item));
     container.appendChild(this.renderOverview(doc, item));
+    container.appendChild(this.renderSummaryEditor(doc, item));
 
-    const rows = doc.createElement("div");
+    const rows = this.createElement(doc, "div");
     rows.className = "paperbridge-pane-rows";
     for (const rowData of this.rowsForItem(item)) {
-      const row = doc.createElement("div");
+      const row = this.createElement(doc, "div");
       row.className = "paperbridge-pane-row";
-      const labelEl = doc.createElement("span");
+      const labelEl = this.createElement(doc, "span");
       labelEl.className = "paperbridge-pane-label";
       this.setLocalizedText(doc, labelEl, rowData.labelL10nID, rowData.label);
-      const valueEl = doc.createElement("span");
+      const valueEl = this.createElement(doc, "span");
       valueEl.className = ["paperbridge-pane-value", rowData.className || ""].filter(Boolean).join(" ");
       this.setLocalizedText(doc, valueEl, rowData.valueL10nID, rowData.value);
       valueEl.title = rowData.value;
-      row.append(labelEl, valueEl);
+      row.appendChild(labelEl);
+      row.appendChild(valueEl);
       rows.appendChild(row);
     }
     container.appendChild(rows);
 
-    const actions = doc.createElement("div");
+    const actions = this.createElement(doc, "div");
     actions.className = "paperbridge-pane-actions";
     this.addActionButton(doc, actions, item, "Open/Create", "paperbridge-item-pane-action-open-create", async () => {
       await PaperBridge.Notes.handleNoteClick(item.id);
@@ -308,24 +330,53 @@ PaperBridge.ItemPane = {
 
   renderOverview(doc, item) {
     const state = this.stateForItem(item);
-    const overview = doc.createElement("div");
+    const overview = this.createElement(doc, "div");
     overview.className = "paperbridge-pane-overview";
 
-    const title = doc.createElement("div");
+    const title = this.createElement(doc, "div");
     title.className = "paperbridge-pane-overview-title";
     this.setLocalizedText(doc, title, this.nextActionL10nID(state), this.nextActionLabel(state));
 
-    const detail = doc.createElement("div");
+    const detail = this.createElement(doc, "div");
     detail.className = "paperbridge-pane-overview-detail";
     const filename = this.safeValue("", () => PaperBridge.Util.pathBasename(state.notePath)) || state.citekey || "-";
     detail.textContent = [filename, state.primaryCollection].filter(value => value && value !== "-").join(" / ") || "-";
 
-    overview.append(title, detail);
+    overview.appendChild(title);
+    overview.appendChild(detail);
     return overview;
   },
 
+  renderSummaryEditor(doc, item) {
+    const state = this.stateForItem(item);
+    const wrapper = this.createElement(doc, "div");
+    wrapper.className = "paperbridge-pane-summary";
+
+    const label = this.createElement(doc, "label");
+    label.className = "paperbridge-pane-summary-label";
+    this.setLocalizedText(doc, label, "paperbridge-item-pane-summary-label", "Brief note");
+
+    const textarea = this.createElement(doc, "textarea");
+    textarea.className = "paperbridge-pane-summary-input";
+    textarea.value = state.summary;
+    textarea.rows = 3;
+    this.setLocalizedAttributes(doc, textarea, "paperbridge-item-pane-summary-placeholder");
+
+    const footer = this.createElement(doc, "div");
+    footer.className = "paperbridge-pane-summary-footer";
+    const saveButton = this.addActionButton(doc, footer, item, "Save Note", "paperbridge-item-pane-action-save-summary", async () => {
+      await PaperBridge.Notes.updateLinkedNoteSummary(item, textarea.value);
+    }, { enabled: this.moduleHas("Notes", "updateLinkedNoteSummary") });
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(textarea);
+    wrapper.appendChild(footer);
+    saveButton.className = `${saveButton.className} paperbridge-pane-button-primary`;
+    return wrapper;
+  },
+
   renderStatusStrip(doc, item) {
-    const strip = doc.createElement("div");
+    const strip = this.createElement(doc, "div");
     strip.className = "paperbridge-pane-status-strip";
     const noteState = this.safeValue(null, () => PaperBridge.Notes.getNoteState(item));
     if (noteState) {
@@ -340,7 +391,7 @@ PaperBridge.ItemPane = {
   },
 
   addBadge(doc, parent, label, l10nID, className) {
-    const badge = doc.createElement("span");
+    const badge = this.createElement(doc, "span");
     badge.className = ["paperbridge-pane-badge", className || ""].filter(Boolean).join(" ");
     this.setLocalizedText(doc, badge, l10nID, label);
     parent.appendChild(badge);
@@ -360,7 +411,7 @@ PaperBridge.ItemPane = {
   },
 
   addActionButton(doc, parent, item, label, l10nID, command, options = {}) {
-    const button = doc.createElement("button");
+    const button = this.createElement(doc, "button");
     button.type = "button";
     button.className = "paperbridge-pane-button";
     this.setLocalizedText(doc, button, l10nID, label);
@@ -401,10 +452,43 @@ PaperBridge.ItemPane = {
       return;
     }
     if (doc?.l10n?.setAttributes) {
-      doc.l10n.setAttributes(element, l10nID);
+      try {
+        doc.l10n.setAttributes(element, l10nID);
+      }
+      catch (error) {
+        PaperBridge.Util.safeLogError(error);
+      }
       return;
     }
     element.setAttribute("data-l10n-id", l10nID);
+  },
+
+  setLocalizedAttributes(doc, element, l10nID) {
+    if (!l10nID) {
+      return;
+    }
+    if (doc?.l10n?.setAttributes) {
+      try {
+        doc.l10n.setAttributes(element, l10nID);
+      }
+      catch (error) {
+        PaperBridge.Util.safeLogError(error);
+      }
+      return;
+    }
+    element.setAttribute("data-l10n-id", l10nID);
+  },
+
+  renderError(doc, body, error) {
+    if (!doc || !body) {
+      return;
+    }
+    body.textContent = "";
+    const container = this.createElement(doc, "div");
+    container.className = "paperbridge-pane paperbridge-pane-error";
+    this.setLocalizedText(doc, container, "paperbridge-item-pane-render-error", "PaperBridge panel failed to render. Run diagnostics or reinstall the plugin.");
+    container.title = error?.message || String(error || "");
+    body.appendChild(container);
   },
 
   moduleHas(moduleName, methodName) {

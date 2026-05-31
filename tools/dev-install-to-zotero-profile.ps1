@@ -85,7 +85,63 @@ function Read-XPIManifest {
   }
 }
 
+function Read-PaperBridgePrefString {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Profile,
+    [Parameter(Mandatory = $true)]
+    [string]$Name
+  )
+
+  $prefPath = Join-Path $Profile "prefs.js"
+  if (!(Test-Path -LiteralPath $prefPath)) {
+    return ""
+  }
+  $escapedName = [regex]::Escape("extensions.paperbridge.$Name")
+  foreach ($line in Get-Content -LiteralPath $prefPath -Encoding UTF8) {
+    if ($line -match "^user_pref\(`"$escapedName`",\s*(.+)\);$") {
+      try {
+        return [string]($Matches[1] | ConvertFrom-Json)
+      }
+      catch {
+        return ""
+      }
+    }
+  }
+  return ""
+}
+
+function Write-PaperBridgeQuitRequests {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Profile,
+    [Parameter(Mandatory = $true)]
+    [object[]]$Processes
+  )
+
+  $token = Read-PaperBridgePrefString -Profile $Profile -Name "trayToken"
+  if (!$token) {
+    Write-Warning "PaperBridge tray token is not available; Zotero may hide to tray instead of exiting."
+    return
+  }
+
+  $tempDir = [System.IO.Path]::GetTempPath()
+  foreach ($process in $Processes) {
+    try {
+      Set-Content -LiteralPath (Join-Path $tempDir "paperbridge-quit-$($process.Id).txt") -Value $token -Encoding UTF8 -NoNewline
+    }
+    catch {
+      Write-Warning "Could not write PaperBridge quit request for PID $($process.Id): $($_.Exception.Message)"
+    }
+  }
+}
+
 function Stop-ZoteroGracefully {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Profile
+  )
+
   $processes = @(Get-Process zotero -ErrorAction SilentlyContinue)
   if (!$processes.Count) {
     return
@@ -94,6 +150,7 @@ function Stop-ZoteroGracefully {
     throw "Zotero is running. Close Zotero first, or rerun with -CloseZotero."
   }
 
+  Write-PaperBridgeQuitRequests -Profile $Profile -Processes $processes
   foreach ($process in $processes) {
     try {
       if ($process.MainWindowHandle -ne 0) {
@@ -162,6 +219,7 @@ function Update-ExtensionRegistry {
   $env:PB_PLUGIN_ID = $PluginID
   $env:PB_NOW_MS = [string][DateTimeOffset]::Now.ToUnixTimeMilliseconds()
 
+  $tempScript = Join-Path ([System.IO.Path]::GetTempPath()) ("paperbridge-update-extension-registry-" + [guid]::NewGuid().ToString("N") + ".js")
   $script = @'
 const fs = require("fs");
 const { pathToFileURL } = require("url");
@@ -213,7 +271,18 @@ addon.targetApplications = [{
 fs.writeFileSync(registryPath, JSON.stringify(registry), "utf8");
 '@
 
-  node -e $script
+  try {
+    Set-Content -LiteralPath $tempScript -Value $script -Encoding UTF8
+    & node $tempScript
+    if ($LASTEXITCODE -ne 0) {
+      throw "node exited with code $LASTEXITCODE while updating extensions.json"
+    }
+  }
+  finally {
+    if (Test-Path -LiteralPath $tempScript) {
+      Remove-Item -LiteralPath $tempScript -Force
+    }
+  }
 }
 
 $resolvedPackage = Resolve-PackagePath
@@ -231,7 +300,7 @@ if (!(Test-Path -LiteralPath $extensionsJson)) {
   throw "Cannot find $extensionsJson"
 }
 
-Stop-ZoteroGracefully
+Stop-ZoteroGracefully -Profile $resolvedProfile
 New-Item -ItemType Directory -Path $extensionsDir -Force | Out-Null
 $backupDir = Backup-ProfileFiles -Profile $resolvedProfile -ProfileXPI $profileXPI
 Copy-Item -LiteralPath $resolvedPackage -Destination $profileXPI -Force
