@@ -379,7 +379,7 @@ async function runBootstrapLifecycleTests({ failStart = false, failUnregister = 
 
   const startupPayload = {
     id: "paperbridge@example.com",
-    version: "0.1.29",
+    version: "0.1.31",
     rootURI: "resource://paperbridge/"
   };
   await bootstrapContext.startup.call(bootstrapContext, startupPayload);
@@ -452,7 +452,7 @@ async function runBootstrapCleanupFailureTest() {
   vm.runInContext(fs.readFileSync(path.join(root, "bootstrap.js"), "utf8"), bootstrapContext, { filename: "bootstrap.js" });
   await bootstrapContext.startup.call(bootstrapContext, {
     id: "paperbridge@example.com",
-    version: "0.1.29",
+    version: "0.1.31",
     rootURI: "resource://paperbridge/"
   });
   await assert.doesNotReject(() => bootstrapContext.shutdown.call(bootstrapContext));
@@ -662,7 +662,7 @@ for (const [file, text] of [
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 assert.strictEqual(manifest.manifest_version, 2);
 assert.strictEqual(manifest.applications?.zotero?.id, "paperbridge@example.com");
-assert.strictEqual(manifest.version, "0.1.29");
+assert.strictEqual(manifest.version, "0.1.31");
 assert.strictEqual(manifest.applications?.zotero?.update_url, "https://example.com/paperbridge/updates.json");
 assert.strictEqual(manifest.applications?.zotero?.strict_min_version, "6.999");
 assert.strictEqual(manifest.applications?.zotero?.strict_max_version, "11.*");
@@ -679,6 +679,8 @@ assert.ok(trayHelperSource.includes("PaperBridge:NOT_FOUND"));
 assert.ok(trayHelperSource.includes("$script:hiddenWindowHandles = @()"));
 assert.ok(trayHelperSource.includes("function Get-ZoteroProcesses"));
 assert.ok(trayHelperSource.includes("FindWindowsForProcess([int]$process.Id, [bool]$VisibleOnly)"));
+assert.ok(trayHelperSource.includes("Treat hide as idempotent"));
+assert.ok(trayHelperSource.includes("$allWindows = @(Get-ZoteroWindows)"));
 assert.ok(trayHelperSource.includes("@(Get-ZoteroProcesses).Count -eq 0"));
 assert.ok(trayHelperSource.includes('"hide" { return Hide-Zotero }'));
 assert.ok(trayHelperSource.includes('"show" { return Show-Zotero }'));
@@ -1295,6 +1297,29 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   await PaperBridge.Notes.updateLinkedNoteSummary(mockItem, "Sharper summary");
   assert.ok(fileContentsByPath.get("D:\\Papers\\Note.md").includes('summary: "Sharper summary"'));
   assert.strictEqual(PaperBridge.Index.get(mockItem).summary, "Sharper summary");
+  fileContentsByPath.set("D:\\Papers\\Note.md", [
+    "---",
+    'title: "Wrong Note"',
+    'zotero_key: "OTHER123"',
+    'summary: "Wrong item summary"',
+    "---",
+    "",
+    "Body"
+  ].join("\n"));
+  assert.strictEqual(PaperBridge.Notes.summaryForItem(mockItem), "Sharper summary");
+  await assert.rejects(
+    () => PaperBridge.Notes.updateLinkedNoteSummary(mockItem, "Do not write this"),
+    /belongs to another Zotero item/
+  );
+  assert.ok(fileContentsByPath.get("D:\\Papers\\Note.md").includes('summary: "Wrong item summary"'));
+  fileContentsByPath.set("D:\\Papers\\Note.md", "Legacy note body without PaperBridge frontmatter.");
+  await PaperBridge.Notes.updateLinkedNoteSummary(mockItem, "Recovered summary");
+  const repairedSummaryNote = fileContentsByPath.get("D:\\Papers\\Note.md");
+  assert.strictEqual(PaperBridge.Notes.validateFrontmatterContent(repairedSummaryNote, mockItem).ok, true);
+  assert.ok(repairedSummaryNote.includes('zotero_key: "ABCD1234"'));
+  assert.ok(repairedSummaryNote.includes('summary: "Recovered summary"'));
+  assert.strictEqual(PaperBridge.Index.get(mockItem).note_path, "D:\\Papers\\Note.md");
+  assert.strictEqual(PaperBridge.Index.get(mockItem).summary, "Recovered summary");
   assert.strictEqual(PaperBridge.ItemPane.summaryForItem(mockItem), "Ready / Rank 1 / -");
   const originalRefreshColumnsForMonitor = PaperBridge.Util.refreshItemTreeColumns;
   let monitorRefreshes = 0;
@@ -1440,7 +1465,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.ok(l10nAttributes.includes("paperbridge-item-pane-summary-label"));
   assert.ok(l10nAttributes.includes("paperbridge-item-pane-action-save-summary"));
   const summaryEditor = testBody.children[0].children[2];
-  assert.strictEqual(summaryEditor.children[1].value, "Sharper summary");
+  assert.strictEqual(summaryEditor.children[1].value, "Recovered summary");
   const paneActions = testBody.children[0].children[4];
   const openCreateButton = paneActions.children[0];
   const paneEvents = [];
@@ -1514,7 +1539,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(unregisteredPaneID, "paperbridge-paperbridge");
   const previousDiagnosticsIndex = prefs.get("extensions.paperbridge.index");
   const originalDiagnosticsSendCommand = PaperBridge.Tray.sendCommand;
-  PaperBridge.version = "0.1.29";
+  PaperBridge.version = "0.1.31";
   PaperBridge.Tray.sendCommand = async command => command === "ping";
   prefs.set("extensions.paperbridge.closeToTray", "true");
   zoteroItemsByID.set(mockItem.id, mockItem);
@@ -1540,7 +1565,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     }
   }));
   const diagnosticsReport = await PaperBridge.Diagnostics.buildReport([mockItem]);
-  assert.ok(diagnosticsReport.includes("PaperBridge: 0.1.29"));
+  assert.ok(diagnosticsReport.includes("PaperBridge: 0.1.31"));
   assert.ok(diagnosticsReport.includes("stale/deleted/missing item entries: 1"));
   assert.ok(diagnosticsReport.includes("helper reachable: yes"));
   assert.ok(diagnosticsReport.includes("Item 42: A Study: On Invalid / Windows * Names"));
@@ -1565,7 +1590,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     diagnosticsAlert = message;
   };
   await PaperBridge.Diagnostics.showReport([mockItem]);
-  assert.ok(clipboardText.includes("PaperBridge: 0.1.29"));
+  assert.ok(clipboardText.includes("PaperBridge: 0.1.31"));
   assert.ok(diagnosticsAlert.includes("copied to the clipboard"));
   PaperBridge.Util.alert = originalDiagnosticsAlert;
   if (originalClipboardContract === undefined) {

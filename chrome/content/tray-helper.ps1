@@ -151,6 +151,13 @@ function Get-ZoteroWindows {
 function Hide-Zotero {
     $windows = @(Get-ZoteroWindows -VisibleOnly)
     if ($windows.Count -eq 0) {
+        # Treat hide as idempotent. During close-to-tray the visible top-level
+        # window can disappear before the helper receives the command, and a
+        # second hide command may arrive while Zotero is already hidden.
+        $allWindows = @(Get-ZoteroWindows)
+        if ($allWindows.Count -gt 0 -or @(Get-ZoteroProcesses).Count -gt 0) {
+            return $true
+        }
         return $false
     }
     $script:hiddenWindowHandles = @($windows)

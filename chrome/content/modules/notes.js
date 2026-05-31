@@ -521,6 +521,7 @@ PaperBridge.Notes = {
 
     try {
       const fields = this.parseFrontmatter(Zotero.File.getContents(path)) || {};
+      this.assertFrontmatterBelongsToItem(fields, item);
       return fields.summary || fields.paperbridge_summary || indexSummary || "";
     }
     catch (error) {
@@ -533,17 +534,25 @@ PaperBridge.Notes = {
     if (!this.isRegularItem(item)) {
       throw new Error("PaperBridge can save summaries only for regular Zotero items.");
     }
-    const path = this.getNotePath(item) && PaperBridge.Util.pathExistsSync(this.getNotePath(item))
-      ? this.getNotePath(item)
+    const existingPath = this.getNotePath(item);
+    const path = existingPath && PaperBridge.Util.pathExistsSync(existingPath)
+      ? existingPath
       : await this.createNoteForItem(item);
     const text = String(summary || "").trim();
+    const collection = this.pickPrimaryCollection(item);
     const content = await Zotero.File.getContentsAsync(path);
     this.assertFrontmatterBelongsToItem(this.parseFrontmatter(content), item);
-    await Zotero.File.putContentsAsync(path, this.updateMarkdownFrontmatterContent(content, {
-      summary: text,
-      updated: PaperBridge.Util.todayISO()
-    }));
+    const validation = this.validateFrontmatterContent(content, item);
+    const updates = validation.ok
+      ? {
+        summary: text,
+        updated: PaperBridge.Util.todayISO()
+      }
+      : this.frontmatterRepairUpdatesForItem(item, content, collection, { summary: text });
+
+    await Zotero.File.putContentsAsync(path, this.updateMarkdownFrontmatterContent(content, updates));
     this.frontmatterValidationCache.delete(this.frontmatterCacheKey(path, item));
+    this.rememberNotePath(item, path, collection, Object.assign({}, this.parseFrontmatter(content) || {}, updates));
     PaperBridge.Index.set(item, { summary: text });
     PaperBridge.Util.refreshItemTreeColumns();
     return path;
@@ -636,7 +645,7 @@ PaperBridge.Notes = {
     const fallbackCollectionName = collection?.name
       || index.primary_collection
       || PaperBridge.Constants.unfiledDirectoryName;
-    return this.frontmatterForItem(item, null, Object.assign({
+    const options = Object.assign({
       collectionName: existingFields.collection
         || existingFields.primary_collection
         || fallbackCollectionName,
@@ -648,7 +657,14 @@ PaperBridge.Notes = {
         : PaperBridge.Ranks.getRank(item),
       status: existingFields.status || PaperBridge.Constants.statusUnread,
       created: existingFields.created || PaperBridge.Util.todayISO()
-    }, overrides));
+    }, overrides);
+    const updates = this.frontmatterForItem(item, null, options);
+    for (const [key, value] of Object.entries(overrides || {})) {
+      if (!["collectionName", "primaryCollectionName"].includes(key)) {
+        updates[key] = value;
+      }
+    }
+    return updates;
   },
 
   hasValidFrontmatterAtPath(path, item) {

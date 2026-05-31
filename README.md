@@ -538,6 +538,8 @@ tools/build-xpi.ps1
 115. PDF 附件识别改为复用统一 helper，除 `attachmentContentType` 和 `.pdf` 路径外，也会读取 `contentType` 属性和 `getField("contentType")`；注释导出和 frontmatter `pdf` URI 选择使用同一判定，避免只通过 getter 暴露 MIME 的 PDF 被漏掉。
 116. 右侧 PaperBridge 入口改用只有 `.tooltiptext` 的 sidenav l10n，避免 Zotero 底部栏把 `PaperBridge` 文本渲染进 20px 图标按钮；图标改为 note-link 线稿，面板增加下一步、PDF 概况和更新时间；Windows tray helper 在启用 close-to-tray 时会延迟预热，减少第一次关闭时才启动 PowerShell helper 的等待和窗口闪烁。
 117. 右侧 PaperBridge 面板增加“简短说明”编辑区，内容保存到对应 Markdown frontmatter 的可选 `summary` 字段；面板渲染改用 XHTML element fallback 和错误兜底，运行期异常会显示错误提示而不是空白。开发安装脚本在 `-CloseZotero` 时会写入一次性退出请求，避免 close-to-tray 把脚本的关闭请求误处理为隐藏到托盘。
+118. Windows tray helper 的 `hide` 命令改为幂等操作：如果没有可见 Zotero 窗口但仍能找到 Zotero 窗口或进程，会视为已经隐藏成功，避免 close 事件时序导致误弹 `Could not hide Zotero through the PaperBridge tray helper`。
+119. 保存右侧 PaperBridge 面板的“简短说明”时，会先校验 Markdown frontmatter 是否属于当前 Zotero 条目；如果 frontmatter 缺失或残缺，会补齐 PaperBridge 必需字段后再写入 `summary`，避免生成只有 `summary/updated` 的半残笔记，也避免 stale index 显示其他条目的说明。
 
 尚未完成：
 
@@ -555,7 +557,7 @@ powershell -ExecutionPolicy Bypass -File tools\build-xpi.ps1
 生成：
 
 ```text
-dist\paperbridge-0.1.29.xpi
+dist\paperbridge-0.1.31.xpi
 dist\paperbridge-latest.xpi
 ```
 
@@ -613,7 +615,7 @@ powershell -ExecutionPolicy Bypass -File tools\verify-zotero-install.ps1
 脚本会检查 `extensions.json` 中是否存在 `paperbridge@example.com`、版本是否匹配、插件是否启用、登记的 XPI 路径是否存在，并读取 profile 中实际安装的 XPI manifest 和 SHA256，与当前 `dist\paperbridge-latest.xpi` 对比。它只读取 profile，不会改写 Zotero 配置。
 如果只是想确认 Zotero 已经登记该插件、但允许它暂时处于禁用或待重启状态，可以加 `-AllowDisabled`。
 
-当前最新运行期修复包为 `0.1.29`；如果 profile 中仍显示 `0.1.28` 或更早版本，或者脚本提示 profile XPI 的 SHA256 与当前 `dist\paperbridge-latest.xpi` 不一致，需要重新安装 `dist\paperbridge-latest.xpi` 并重启 Zotero。
+当前最新运行期修复包为 `0.1.31`；如果 profile 中仍显示 `0.1.30` 或更早版本，或者脚本提示 profile XPI 的 SHA256 与当前 `dist\paperbridge-latest.xpi` 不一致，需要重新安装 `dist\paperbridge-latest.xpi` 并重启 Zotero。
 开发调试时，如果 PaperBridge 已经通过 Zotero UI 登记过，但拖拽更新后 profile 仍停在旧 XPI，可以在关闭 Zotero 后运行：
 
 ```powershell
@@ -628,7 +630,7 @@ powershell -ExecutionPolicy Bypass -File tools\dev-install-to-zotero-profile.ps1
 powershell -ExecutionPolicy Bypass -File tools\diagnose-xpi.ps1
 ```
 
-它不会修改 Zotero，只用于确认当前 `dist\paperbridge-0.1.29.xpi` / `dist\paperbridge-latest.xpi` 是否是可被 Zotero 9.0.4 接受的结构和兼容范围，并提示 profile 中是否已有登记记录。
+它不会修改 Zotero，只用于确认当前 `dist\paperbridge-0.1.31.xpi` / `dist\paperbridge-latest.xpi` 是否是可被 Zotero 9.0.4 接受的结构和兼容范围，并提示 profile 中是否已有登记记录。
 验证脚本本身也纳入本地验证的 `-SelfTest`，避免 profile 解析和状态判断逻辑退化。
 
 安装失败、列不可见、托盘关闭等问题的排查和修复记录见 `docs/troubleshooting.md`。
