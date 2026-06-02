@@ -27,12 +27,10 @@ PaperBridge.Tray = {
 
     const state = {
       closeHandler: event => this.onClose(event, window),
-      beforeUnloadHandler: event => this.onBeforeUnload(event, window),
       originalClose: null,
       originalGoQuitApplication: null
     };
     window.addEventListener("close", state.closeHandler, true);
-    window.addEventListener("beforeunload", state.beforeUnloadHandler, true);
     this.hookWindowCloseMethods(window, state);
     this.handlers.set(window, state);
     this.scheduleHelperWarmup();
@@ -49,7 +47,6 @@ PaperBridge.Tray = {
       return;
     }
     window.removeEventListener("close", state.closeHandler, true);
-    window.removeEventListener("beforeunload", state.beforeUnloadHandler, true);
     this.restoreWindowCloseMethods(window, state);
     this.handlers.delete(window);
   },
@@ -57,7 +54,6 @@ PaperBridge.Tray = {
   removeFromAllWindows() {
     for (const [window, state] of this.handlers.entries()) {
       window.removeEventListener("close", state.closeHandler, true);
-      window.removeEventListener("beforeunload", state.beforeUnloadHandler, true);
       this.restoreWindowCloseMethods(window, state);
     }
     this.handlers.clear();
@@ -190,10 +186,13 @@ PaperBridge.Tray = {
   },
 
   onBeforeUnload(event, window) {
-    return this.interceptWindowClose(event, window) ? false : undefined;
+    return undefined;
   },
 
   interceptWindowClose(event, window) {
+    if (!this.isTopLevelWindowCloseEvent(event, window)) {
+      return false;
+    }
     if (this.allowQuit || this.consumeExternalQuitRequest()) {
       this.allowQuit = true;
       return false;
@@ -209,6 +208,24 @@ PaperBridge.Tray = {
       event.returnValue = false;
     }
     this.scheduleHide(window);
+    return true;
+  },
+
+  isTopLevelWindowCloseEvent(event, window) {
+    if (!event) {
+      return true;
+    }
+    const doc = window?.document || null;
+    const allowedTargets = new Set([window, doc, doc?.documentElement].filter(Boolean));
+    const target = event.target || null;
+    const originalTarget = event.originalTarget || null;
+
+    if (target && !allowedTargets.has(target)) {
+      return false;
+    }
+    if (originalTarget && !allowedTargets.has(originalTarget)) {
+      return false;
+    }
     return true;
   },
 

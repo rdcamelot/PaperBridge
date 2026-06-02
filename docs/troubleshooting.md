@@ -60,7 +60,7 @@
 
 修复：
 
-- 插件侧同时处理 `close`、`beforeunload`、`window.close()`、`goQuitApplication()` 和 `quit-application-requested`。
+- 插件侧同时处理 `close`、`window.close()`、`goQuitApplication()` 和 `quit-application-requested`。
 - helper 右键菜单精简为 `Open Zotero` 和 `Quit Zotero`。
 - `Quit Zotero` 写入一个带 token 的一次性退出请求，再向 Zotero 主窗口发送关闭消息；插件看到该请求后放行真正退出。
 - helper 启动时设置 DPI aware 并启用 WinForms visual styles，降低右键菜单模糊问题。
@@ -126,6 +126,7 @@
 - 从 `0.1.29` 开始，PaperBridge item pane 支持编辑“简短说明”，写入对应 Markdown frontmatter 的可选 `summary` 字段；面板渲染增加 XHTML element fallback 和错误兜底，避免回调异常时只剩空白内容。开发安装脚本在 `-CloseZotero` 时会先写入一次性退出请求，避免插件把脚本的关闭请求拦截成隐藏到托盘。
 - 从 `0.1.30` 开始，tray helper 的 `hide` 命令改为幂等：如果当前没有可见 Zotero 窗口，但仍存在 Zotero 窗口或进程，会返回成功而不是 `NOT_FOUND`，避免 close-to-tray 时序造成误报。
 - 从 `0.1.31` 开始，右侧 PaperBridge 面板保存“简短说明”前会校验 Markdown frontmatter 归属；遇到缺失或残缺 frontmatter 时会先补齐 PaperBridge 必需字段再写入 `summary`，避免把旧笔记修成只有 `summary/updated` 的半残 frontmatter，也避免 stale index 读出其他条目的说明。
+- 从 `0.1.32` 开始，close-to-tray 不再监听 `beforeunload`，并且只拦截目标为 Zotero 顶层窗口、document 或 documentElement 的 `close` 事件；PDF reader、tab、弹窗或内部控件的 close/unload 事件会被放行，避免双击 PDF 或打开 reader 时误触发隐藏到托盘。
 
 ## Zotero 仍在运行旧包
 
