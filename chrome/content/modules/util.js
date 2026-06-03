@@ -35,6 +35,45 @@ PaperBridge.Util = {
     return Services.prompt.confirm(null, title, message);
   },
 
+  showProgressNotification({ headline = "PaperBridge", message = "", description = "", itemType = "note", progress = 100, error = false, timeout = 4500 } = {}) {
+    try {
+      if (typeof Zotero.ProgressWindow !== "function") {
+        if (message) {
+          this.log(`${headline}: ${message}`);
+        }
+        return false;
+      }
+
+      const progressWindow = new Zotero.ProgressWindow({ closeOnClick: true });
+      progressWindow.changeHeadline(String(headline || "PaperBridge"));
+      if (description && typeof progressWindow.addDescription === "function") {
+        progressWindow.addDescription(String(description));
+      }
+
+      progressWindow.show();
+      if (message) {
+        const itemProgress = new progressWindow.ItemProgress(itemType || "note", String(message));
+        if (error && typeof itemProgress.setError === "function") {
+          itemProgress.setError();
+        }
+        else if (typeof itemProgress.setProgress === "function") {
+          itemProgress.setProgress(Math.max(0, Math.min(100, Number(progress) || 0)));
+        }
+      }
+      if (typeof progressWindow.startCloseTimer === "function") {
+        progressWindow.startCloseTimer(timeout);
+      }
+      return true;
+    }
+    catch (notificationError) {
+      this.safeLogError(notificationError);
+      if (message) {
+        this.log(`${headline}: ${message}`);
+      }
+      return false;
+    }
+  },
+
   copyTextToClipboard(text) {
     try {
       const helper = Cc["@mozilla.org/widget/clipboardhelper;1"]?.getService?.(Ci.nsIClipboardHelper);

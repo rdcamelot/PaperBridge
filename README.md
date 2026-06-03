@@ -558,7 +558,7 @@ powershell -ExecutionPolicy Bypass -File tools\build-xpi.ps1
 生成：
 
 ```text
-dist\paperbridge-0.1.32.xpi
+dist\paperbridge-0.1.35.xpi
 dist\paperbridge-latest.xpi
 ```
 
@@ -616,7 +616,7 @@ powershell -ExecutionPolicy Bypass -File tools\verify-zotero-install.ps1
 脚本会检查 `extensions.json` 中是否存在 `paperbridge@example.com`、版本是否匹配、插件是否启用、登记的 XPI 路径是否存在，并读取 profile 中实际安装的 XPI manifest 和 SHA256，与当前 `dist\paperbridge-latest.xpi` 对比。它只读取 profile，不会改写 Zotero 配置。
 如果只是想确认 Zotero 已经登记该插件、但允许它暂时处于禁用或待重启状态，可以加 `-AllowDisabled`。
 
-当前最新运行期修复包为 `0.1.32`；如果 profile 中仍显示 `0.1.31` 或更早版本，或者脚本提示 profile XPI 的 SHA256 与当前 `dist\paperbridge-latest.xpi` 不一致，需要重新安装 `dist\paperbridge-latest.xpi` 并重启 Zotero。
+当前最新运行期修复包为 `0.1.35`；如果 profile 中仍显示更早版本，或者脚本提示 profile XPI 的 SHA256 与当前 `dist\paperbridge-latest.xpi` 不一致，需要重新安装 `dist\paperbridge-latest.xpi` 并重启 Zotero。
 开发调试时，如果 PaperBridge 已经通过 Zotero UI 登记过，但拖拽更新后 profile 仍停在旧 XPI，可以在关闭 Zotero 后运行：
 
 ```powershell
@@ -631,7 +631,7 @@ powershell -ExecutionPolicy Bypass -File tools\dev-install-to-zotero-profile.ps1
 powershell -ExecutionPolicy Bypass -File tools\diagnose-xpi.ps1
 ```
 
-它不会修改 Zotero，只用于确认当前 `dist\paperbridge-0.1.32.xpi` / `dist\paperbridge-latest.xpi` 是否是可被 Zotero 9.0.4 接受的结构和兼容范围，并提示 profile 中是否已有登记记录。
+它不会修改 Zotero，只用于确认当前 `dist\paperbridge-0.1.35.xpi` / `dist\paperbridge-latest.xpi` 是否是可被 Zotero 9.0.4 接受的结构和兼容范围，并提示 profile 中是否已有登记记录。
 验证脚本本身也纳入本地验证的 `-SelfTest`，避免 profile 解析和状态判断逻辑退化。
 
 安装失败、列不可见、托盘关闭等问题的排查和修复记录见 `docs/troubleshooting.md`。

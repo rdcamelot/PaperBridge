@@ -85,6 +85,10 @@ PaperBridge.Settings = {
     return this.collectionListPref("autoCreateOnlyCollections");
   },
 
+  autoCreateNotifications() {
+    return this.getBool("autoCreateNotifications", true);
+  },
+
   ignoreCollections() {
     return this.collectionListPref("ignoreCollections");
   },

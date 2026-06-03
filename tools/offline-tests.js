@@ -10,6 +10,7 @@ const prefs = new Map([
   ["extensions.paperbridge.useBetterBibTeXCitekey", true],
   ["extensions.paperbridge.fallbackCitekeyPattern", "{{firstCreator}}{{year}}_{{firstTitleWord}}"],
   ["extensions.paperbridge.autoCreateOnlyCollections", ""],
+  ["extensions.paperbridge.autoCreateNotifications", true],
   ["extensions.paperbridge.ignoreCollections", ""],
   ["extensions.paperbridge.maxFilenameLength", 180],
   ["extensions.paperbridge.rankTagPrefix", "paperbridge/rank/"],
@@ -28,6 +29,7 @@ let searchIDs = [];
 const launchedFiles = [];
 const observerRegistrations = [];
 const observerRemovals = [];
+const progressWindows = [];
 const collectionsByID = new Map([
   [7, { id: 7, name: "Inbox" }],
   [8, { id: 8, name: "Ignored" }],
@@ -137,6 +139,42 @@ const context = {
       get(id) {
         return collectionsByID.get(Number(id)) || null;
       }
+    },
+    ProgressWindow: function (options = {}) {
+      const progressWindow = this;
+      this.options = options;
+      this.headline = "";
+      this.descriptions = [];
+      this.items = [];
+      this.shown = false;
+      this.closeTimer = null;
+      this.changeHeadline = function (headline) {
+        progressWindow.headline = headline;
+      };
+      this.addDescription = function (description) {
+        progressWindow.descriptions.push(description);
+      };
+      this.show = function () {
+        progressWindow.shown = true;
+        return true;
+      };
+      this.startCloseTimer = function (ms) {
+        progressWindow.closeTimer = ms;
+      };
+      this.ItemProgress = function (itemType, text) {
+        this.itemType = itemType;
+        this.text = text;
+        this.progress = null;
+        this.error = false;
+        progressWindow.items.push(this);
+      };
+      this.ItemProgress.prototype.setProgress = function (progress) {
+        this.progress = progress;
+      };
+      this.ItemProgress.prototype.setError = function () {
+        this.error = true;
+      };
+      progressWindows.push(this);
     },
     BetterBibTeX: null
   },
@@ -379,7 +417,7 @@ async function runBootstrapLifecycleTests({ failStart = false, failUnregister = 
 
   const startupPayload = {
     id: "paperbridge@example.com",
-    version: "0.1.32",
+    version: "0.1.35",
     rootURI: "resource://paperbridge/"
   };
   await bootstrapContext.startup.call(bootstrapContext, startupPayload);
@@ -452,7 +490,7 @@ async function runBootstrapCleanupFailureTest() {
   vm.runInContext(fs.readFileSync(path.join(root, "bootstrap.js"), "utf8"), bootstrapContext, { filename: "bootstrap.js" });
   await bootstrapContext.startup.call(bootstrapContext, {
     id: "paperbridge@example.com",
-    version: "0.1.32",
+    version: "0.1.35",
     rootURI: "resource://paperbridge/"
   });
   await assert.doesNotReject(() => bootstrapContext.shutdown.call(bootstrapContext));
@@ -662,7 +700,7 @@ for (const [file, text] of [
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 assert.strictEqual(manifest.manifest_version, 2);
 assert.strictEqual(manifest.applications?.zotero?.id, "paperbridge@example.com");
-assert.strictEqual(manifest.version, "0.1.32");
+assert.strictEqual(manifest.version, "0.1.35");
 assert.strictEqual(manifest.applications?.zotero?.update_url, "https://example.com/paperbridge/updates.json");
 assert.strictEqual(manifest.applications?.zotero?.strict_min_version, "6.999");
 assert.strictEqual(manifest.applications?.zotero?.strict_max_version, "11.*");
@@ -671,6 +709,7 @@ assert.strictEqual(manifest.icons?.["96"], "icons/paperbridge-20.svg");
 const defaultPrefsSource = fs.readFileSync(path.join(root, "prefs.js"), "utf8");
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.markdownRoot"'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.closeToTray", true);'));
+assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.autoCreateNotifications", true);'));
 const trayHelperSource = fs.readFileSync(path.join(root, "chrome/content/tray-helper.ps1"), "utf8");
 assert.ok(trayHelperSource.includes("$client.ReceiveTimeout = 1000"));
 assert.ok(trayHelperSource.includes("$client.SendTimeout = 1000"));
@@ -819,6 +858,9 @@ prefs.set("extensions.paperbridge.rankTagPrefix", "custom/");
 prefs.set("extensions.paperbridge.statusTagPrefix", "custom/");
 assert.strictEqual(PaperBridge.Settings.rankTagPrefix(), "custom/");
 assert.strictEqual(PaperBridge.Settings.statusTagPrefix(), "paperbridge/status/");
+prefs.set("extensions.paperbridge.autoCreateNotifications", "false");
+assert.strictEqual(PaperBridge.Settings.autoCreateNotifications(), false);
+prefs.set("extensions.paperbridge.autoCreateNotifications", true);
 prefs.set("extensions.paperbridge.rankTagPrefix", "paperbridge/status/");
 prefs.set("extensions.paperbridge.statusTagPrefix", "");
 assert.strictEqual(PaperBridge.Settings.statusTagPrefix(), "paperbridge/state/");
@@ -1554,7 +1596,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(unregisteredPaneID, "paperbridge-paperbridge");
   const previousDiagnosticsIndex = prefs.get("extensions.paperbridge.index");
   const originalDiagnosticsSendCommand = PaperBridge.Tray.sendCommand;
-  PaperBridge.version = "0.1.32";
+  PaperBridge.version = "0.1.35";
   PaperBridge.Tray.sendCommand = async command => command === "ping";
   prefs.set("extensions.paperbridge.closeToTray", "true");
   zoteroItemsByID.set(mockItem.id, mockItem);
@@ -1580,7 +1622,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     }
   }));
   const diagnosticsReport = await PaperBridge.Diagnostics.buildReport([mockItem]);
-  assert.ok(diagnosticsReport.includes("PaperBridge: 0.1.32"));
+  assert.ok(diagnosticsReport.includes("PaperBridge: 0.1.35"));
   assert.ok(diagnosticsReport.includes("stale/deleted/missing item entries: 1"));
   assert.ok(diagnosticsReport.includes("helper reachable: yes"));
   assert.ok(diagnosticsReport.includes("Item 42: A Study: On Invalid / Windows * Names"));
@@ -1605,7 +1647,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     diagnosticsAlert = message;
   };
   await PaperBridge.Diagnostics.showReport([mockItem]);
-  assert.ok(clipboardText.includes("PaperBridge: 0.1.32"));
+  assert.ok(clipboardText.includes("PaperBridge: 0.1.35"));
   assert.ok(diagnosticsAlert.includes("copied to the clipboard"));
   PaperBridge.Util.alert = originalDiagnosticsAlert;
   if (originalClipboardContract === undefined) {
@@ -3695,6 +3737,61 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     })),
     [{ itemID: 42, collectionID: null }]
   );
+
+  const notificationItem = Object.assign({}, mockItem, {
+    id: 502,
+    key: "NOTICE1",
+    getCollections() {
+      return [7];
+    },
+    getAttachments() {
+      return [];
+    }
+  });
+  zoteroItemsByID.set(502, notificationItem);
+  progressWindows.length = 0;
+  PaperBridge.Notifications.noticeStates.clear();
+  assert.strictEqual(PaperBridge.Notifications.showAutoCreateNotice(notificationItem, "complete", {
+    path: "D:\\Papers\\Notice.md",
+    force: true
+  }), true);
+  assert.strictEqual(progressWindows.length, 1);
+  assert.strictEqual(progressWindows[0].headline, "PaperBridge");
+  assert.strictEqual(progressWindows[0].shown, true);
+  assert.strictEqual(progressWindows[0].items[0].itemType, "note");
+  assert.ok(progressWindows[0].items[0].text.includes("Markdown note created"));
+  assert.strictEqual(progressWindows[0].items[0].progress, 100);
+  assert.strictEqual(progressWindows[0].closeTimer, 500);
+  assert.strictEqual(progressWindows[0].descriptions[0], "D:\\Papers\\Notice.md");
+
+  progressWindows.length = 0;
+  assert.strictEqual(PaperBridge.Notifications.showAutoCreateNotice(notificationItem, "failed", {
+    reason: "metadata stayed incomplete",
+    force: true
+  }), true);
+  assert.strictEqual(progressWindows[0].items[0].error, true);
+  assert.ok(progressWindows[0].descriptions[0].includes("metadata stayed incomplete"));
+
+  progressWindows.length = 0;
+  PaperBridge.Notifications.noticeStates.clear();
+  assert.strictEqual(PaperBridge.Notifications.showAutoCreateNotice(notificationItem, "queued"), true);
+  assert.strictEqual(PaperBridge.Notifications.showAutoCreateNotice(notificationItem, "queued"), false);
+  assert.strictEqual(progressWindows.length, 1);
+  prefs.set("extensions.paperbridge.autoCreateNotifications", false);
+  assert.strictEqual(PaperBridge.Notifications.showAutoCreateNotice(notificationItem, "complete", {
+    path: "D:\\Papers\\Notice.md",
+    force: true
+  }), false);
+  assert.strictEqual(progressWindows.length, 1);
+  prefs.set("extensions.paperbridge.autoCreateNotifications", true);
+
+  progressWindows.length = 0;
+  PaperBridge.Notifications.noticeStates.clear();
+  PaperBridge.Notifications.scheduleItem(502, 7, 3000);
+  assert.strictEqual(progressWindows.length, 1);
+  PaperBridge.Notifications.scheduleItem(502, 7, PaperBridge.Notifications.retryDelay);
+  assert.strictEqual(progressWindows.length, 1);
+
   PaperBridge.Notifications.scheduleItem(42, 7, 60000);
   assert.deepStrictEqual(plain(PaperBridge.Notifications.pending.get(42)), { collectionID: 7 });
   PaperBridge.Notifications.scheduleItem(42, null, 60000);

@@ -4,6 +4,7 @@ pref("extensions.paperbridge.filenameTemplate", "{{citekey}} - {{shortTitle}}.md
 pref("extensions.paperbridge.useBetterBibTeXCitekey", true);
 pref("extensions.paperbridge.fallbackCitekeyPattern", "{{firstCreator}}{{year}}_{{firstTitleWord}}");
 pref("extensions.paperbridge.autoCreate", true);
+pref("extensions.paperbridge.autoCreateNotifications", true);
 pref("extensions.paperbridge.autoCreateOnlyCollections", "");
 pref("extensions.paperbridge.ignoreCollections", "");
 pref("extensions.paperbridge.attachLinkedNote", true);

@@ -5,6 +5,7 @@ PaperBridge.Notifications = {
   timers: new Map(),
   pending: new Map(),
   retryCounts: new Map(),
+  noticeStates: new Map(),
   retryDelay: 5000,
   maxRetries: 5,
 
@@ -32,6 +33,7 @@ PaperBridge.Notifications = {
     this.timers.clear();
     this.pending.clear();
     this.retryCounts.clear();
+    this.noticeStates.clear();
   },
 
   observer: {
@@ -81,6 +83,9 @@ PaperBridge.Notifications = {
       ? numericCollectionID
       : existing.collectionID || null;
     this.pending.set(numericID, { collectionID: nextCollectionID });
+    if (delay <= 3000) {
+      this.showQueuedNotice(numericID, nextCollectionID);
+    }
 
     const timer = setTimeout(() => {
       this.timers.delete(numericID);
@@ -96,6 +101,7 @@ PaperBridge.Notifications = {
     if (item?.deleted) {
       PaperBridge.Index.remove(item);
       PaperBridge.Util.refreshItemTreeColumns();
+      this.clearNoticeState(itemID);
       return;
     }
     if (!item || !PaperBridge.Notes.isRegularItem(item) || item.deleted) {
@@ -117,12 +123,15 @@ PaperBridge.Notifications = {
     const state = PaperBridge.Notes.getNoteState(item);
     if (state !== PaperBridge.Constants.noteStates.create && !this.shouldRepairExistingNoteState(item, state)) {
       this.retryCounts.delete(itemID);
+      this.clearNoticeState(itemID);
       return;
     }
 
     try {
-      await PaperBridge.Notes.createNoteForItem(item, { collection });
+      this.showAutoCreateNotice(item, "creating", { collection });
+      const path = await PaperBridge.Notes.createNoteForItem(item, { collection });
       this.retryCounts.delete(itemID);
+      this.showAutoCreateNotice(item, "complete", { collection, path, force: true });
     }
     catch (error) {
       PaperBridge.Util.safeLogError(error);
@@ -160,13 +169,149 @@ PaperBridge.Notifications = {
 
   retryItem(itemID, collectionID, reason = "metadata is still incomplete") {
     const retries = (this.retryCounts.get(itemID) || 0) + 1;
+    const item = Zotero.Items.get(itemID);
     if (retries > this.maxRetries) {
       PaperBridge.Util.log(`Skipping auto-create for item ${itemID}; ${reason} after ${this.maxRetries} retries.`);
       this.retryCounts.delete(itemID);
+      this.showAutoCreateNotice(item, "failed", {
+        reason: `${reason} after ${this.maxRetries} retries`,
+        force: true
+      });
       return;
     }
     this.retryCounts.set(itemID, retries);
+    this.showAutoCreateNotice(item, reason.startsWith("last attempt failed") ? "retrying" : "waiting", {
+      reason,
+      retry: retries
+    });
     this.scheduleItem(itemID, collectionID, this.retryDelay);
+  },
+
+  showQueuedNotice(itemID, collectionID) {
+    const item = Zotero.Items.get(itemID);
+    if (!item || !PaperBridge.Notes.isRegularItem(item)) {
+      return false;
+    }
+    const collectionIDs = this.collectionIDsForItem(item);
+    if (!collectionIDs.length) {
+      return false;
+    }
+    const collection = this.autoCreateCollectionForItem(item, collectionID);
+    if (!collection) {
+      return false;
+    }
+    const state = PaperBridge.Notes.getNoteState(item);
+    if (state !== PaperBridge.Constants.noteStates.create && !this.shouldRepairExistingNoteState(item, state)) {
+      return false;
+    }
+    return this.showAutoCreateNotice(item, "queued", { collection });
+  },
+
+  showAutoCreateNotice(item, stage, options = {}) {
+    if (!item || !this.shouldShowAutoCreateNotices()) {
+      return false;
+    }
+    const stageInfo = this.autoCreateNoticeForStage(item, stage, options);
+    if (!stageInfo) {
+      return false;
+    }
+
+    const stateKey = this.autoCreateNoticeStateKey(stage, options);
+    if (!options.force && item.id && this.noticeStates.get(item.id) === stateKey) {
+      return false;
+    }
+    if (item.id) {
+      this.noticeStates.set(item.id, stateKey);
+    }
+
+    return PaperBridge.Util.showProgressNotification({
+      headline: "PaperBridge",
+      message: stageInfo.message,
+      description: stageInfo.description,
+      itemType: "note",
+      progress: stageInfo.progress,
+      error: stageInfo.error,
+      timeout: stageInfo.timeout
+    });
+  },
+
+  shouldShowAutoCreateNotices() {
+    return Boolean(PaperBridge.Settings.autoCreateNotifications?.()
+      ?? PaperBridge.Settings.getBool("autoCreateNotifications", true));
+  },
+
+  autoCreateNoticeForStage(item, stage, options = {}) {
+    const title = this.truncatedItemTitle(item);
+    const collectionName = options.collection?.name ? ` (${options.collection.name})` : "";
+    const path = String(options.path || "").trim();
+    const reason = options.reason ? this.errorMessage(options.reason) : "";
+
+    switch (stage) {
+      case "queued":
+        return {
+          message: `Received item: ${title}`,
+          description: `PaperBridge will create the Markdown note after Zotero metadata settles${collectionName}.`,
+          progress: 20,
+          timeout: 3500
+        };
+      case "waiting":
+        return {
+          message: `Waiting for metadata: ${title}`,
+          description: reason || "Zotero has not finished filling item metadata yet.",
+          progress: 35,
+          timeout: 4500
+        };
+      case "creating":
+        return {
+          message: `Creating Markdown note: ${title}`,
+          description: collectionName ? `Target collection${collectionName}` : "",
+          progress: 65,
+          timeout: 3500
+        };
+      case "retrying":
+        return {
+          message: `Markdown note creation will retry: ${title}`,
+          description: reason,
+          progress: 45,
+          timeout: 5500
+        };
+      case "complete":
+        return {
+          message: `Markdown note created: ${title}`,
+          description: path,
+          progress: 100,
+          timeout: 500
+        };
+      case "failed":
+        return {
+          message: `Markdown note was not created: ${title}`,
+          description: reason,
+          error: true,
+          progress: 100,
+          timeout: 8000
+        };
+      default:
+        return null;
+    }
+  },
+
+  autoCreateNoticeStateKey(stage, options = {}) {
+    if (stage === "failed") {
+      return `${stage}:${this.errorMessage(options.reason || "")}`;
+    }
+    return stage;
+  },
+
+  clearNoticeState(itemID) {
+    const numericID = this.positiveIntegerID(itemID);
+    if (numericID) {
+      this.noticeStates.delete(numericID);
+    }
+  },
+
+  truncatedItemTitle(item) {
+    const title = String(item?.getField?.("title") || "(untitled)").replace(/\s+/g, " ").trim();
+    return title.length > 70 ? `${title.slice(0, 67)}...` : title;
   },
 
   errorMessage(error) {
