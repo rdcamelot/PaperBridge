@@ -5,6 +5,8 @@ PaperBridge.Tray = {
   helperStarted: false,
   helperWarmupTimer: null,
   helperWarmupPromise: null,
+  startupRestoreTimer: null,
+  startupRestoreDone: false,
   autoHidden: false,
   allowQuit: false,
   closeHidePromise: null,
@@ -13,6 +15,7 @@ PaperBridge.Tray = {
   commandTimeoutMS: 1000,
   quickPingTimeoutMS: 250,
   helperWarmupDelayMS: 1500,
+  startupRestoreDelayMS: 2200,
 
   start() {
     this.allowQuit = false;
@@ -38,7 +41,9 @@ PaperBridge.Tray = {
     if (this.shouldUseTray() && PaperBridge.Settings.trayAutoHideOnStartup() && !this.autoHidden) {
       this.autoHidden = true;
       setTimeout(() => this.hideWindow(window).catch(error => PaperBridge.Util.logError(error)), 1200);
+      return;
     }
+    this.scheduleStartupRestore();
   },
 
   removeFromWindow(window) {
@@ -63,6 +68,7 @@ PaperBridge.Tray = {
     this.unregisterQuitObserver();
     this.removeFromAllWindows();
     this.cancelHelperWarmup();
+    this.cancelStartupRestore(true);
     if (this.helperWarmupPromise) {
       await this.helperWarmupPromise.catch(() => {});
     }
@@ -88,6 +94,27 @@ PaperBridge.Tray = {
     if (this.helperWarmupTimer) {
       clearTimeout(this.helperWarmupTimer);
       this.helperWarmupTimer = null;
+    }
+  },
+
+  scheduleStartupRestore(delayMS = this.startupRestoreDelayMS) {
+    if (this.startupRestoreDone || this.startupRestoreTimer || !this.shouldUseTray() || PaperBridge.Settings.trayAutoHideOnStartup()) {
+      return;
+    }
+    this.startupRestoreDone = true;
+    this.startupRestoreTimer = setTimeout(() => {
+      this.startupRestoreTimer = null;
+      this.showWindow().catch(error => PaperBridge.Util.safeLogError(error));
+    }, delayMS);
+  },
+
+  cancelStartupRestore(resetDone = false) {
+    if (this.startupRestoreTimer) {
+      clearTimeout(this.startupRestoreTimer);
+      this.startupRestoreTimer = null;
+    }
+    if (resetDone) {
+      this.startupRestoreDone = false;
     }
   },
 
@@ -230,6 +257,7 @@ PaperBridge.Tray = {
   },
 
   scheduleHide(window) {
+    this.cancelStartupRestore();
     if (this.closeHidePromise) {
       return this.closeHidePromise;
     }

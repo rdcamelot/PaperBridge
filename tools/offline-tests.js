@@ -4,6 +4,8 @@ const path = require("path");
 const vm = require("vm");
 
 const root = path.resolve(__dirname, "..");
+const expectedManifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+const expectedVersion = expectedManifest.version;
 const prefs = new Map([
   ["extensions.paperbridge.markdownRoot", "D:\\Papers"],
   ["extensions.paperbridge.filenameTemplate", "{{citekey}} - {{shortTitle}}.md"],
@@ -11,6 +13,7 @@ const prefs = new Map([
   ["extensions.paperbridge.fallbackCitekeyPattern", "{{firstCreator}}{{year}}_{{firstTitleWord}}"],
   ["extensions.paperbridge.autoCreateOnlyCollections", ""],
   ["extensions.paperbridge.autoCreateNotifications", true],
+  ["extensions.paperbridge.deleteMarkdownWithZoteroItem", true],
   ["extensions.paperbridge.ignoreCollections", ""],
   ["extensions.paperbridge.maxFilenameLength", 180],
   ["extensions.paperbridge.rankTagPrefix", "paperbridge/rank/"],
@@ -417,7 +420,7 @@ async function runBootstrapLifecycleTests({ failStart = false, failUnregister = 
 
   const startupPayload = {
     id: "paperbridge@example.com",
-    version: "0.1.35",
+    version: expectedVersion,
     rootURI: "resource://paperbridge/"
   };
   await bootstrapContext.startup.call(bootstrapContext, startupPayload);
@@ -490,7 +493,7 @@ async function runBootstrapCleanupFailureTest() {
   vm.runInContext(fs.readFileSync(path.join(root, "bootstrap.js"), "utf8"), bootstrapContext, { filename: "bootstrap.js" });
   await bootstrapContext.startup.call(bootstrapContext, {
     id: "paperbridge@example.com",
-    version: "0.1.35",
+    version: expectedVersion,
     rootURI: "resource://paperbridge/"
   });
   await assert.doesNotReject(() => bootstrapContext.shutdown.call(bootstrapContext));
@@ -697,10 +700,10 @@ for (const [file, text] of [
   assert.ok(sourceIncludes(file, text), `${file} should contain valid UTF-8 text: ${text}`);
 }
 
-const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+const manifest = expectedManifest;
 assert.strictEqual(manifest.manifest_version, 2);
 assert.strictEqual(manifest.applications?.zotero?.id, "paperbridge@example.com");
-assert.strictEqual(manifest.version, "0.1.35");
+assert.strictEqual(manifest.version, expectedVersion);
 assert.strictEqual(manifest.applications?.zotero?.update_url, "https://example.com/paperbridge/updates.json");
 assert.strictEqual(manifest.applications?.zotero?.strict_min_version, "6.999");
 assert.strictEqual(manifest.applications?.zotero?.strict_max_version, "11.*");
@@ -710,6 +713,7 @@ const defaultPrefsSource = fs.readFileSync(path.join(root, "prefs.js"), "utf8");
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.markdownRoot"'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.closeToTray", true);'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.autoCreateNotifications", true);'));
+assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.deleteMarkdownWithZoteroItem", true);'));
 const trayHelperSource = fs.readFileSync(path.join(root, "chrome/content/tray-helper.ps1"), "utf8");
 assert.ok(trayHelperSource.includes("$client.ReceiveTimeout = 1000"));
 assert.ok(trayHelperSource.includes("$client.SendTimeout = 1000"));
@@ -727,6 +731,10 @@ assert.ok(trayHelperSource.includes('"quit-zotero" { return Request-Zotero-Quit 
 assert.ok(trayHelperSource.includes("Open Zotero"));
 assert.ok(trayHelperSource.includes("Quit Zotero"));
 assert.ok(!trayHelperSource.includes("Exit tray helper"));
+const openZoteroLauncherSource = fs.readFileSync(path.join(root, "tools/open-zotero-paperbridge.ps1"), "utf8");
+assert.ok(openZoteroLauncherSource.includes("function Try-HelperShow"));
+assert.ok(openZoteroLauncherSource.includes("function Restore-ZoteroWindow"));
+assert.ok(openZoteroLauncherSource.includes("Start-Process -FilePath $resolvedZoteroExe"));
 
 const preferencesSource = fs.readFileSync(path.join(root, "preferences.xhtml"), "utf8");
 const preferenceL10nIDs = [...preferencesSource.matchAll(/data-l10n-id="([^"]+)"/g)].map(match => match[1]);
@@ -775,6 +783,12 @@ for (const localeFile of ["locale/en-US/paperbridge.ftl", "locale/zh-CN/paperbri
 }
 
 assert.strictEqual(PaperBridge.Settings.closeToTray(), false, "string false pref should parse to false");
+prefs.delete("extensions.paperbridge.closeToTray");
+const originalZoteroIsWinForCloseToTray = context.Zotero.isWin;
+context.Zotero.isWin = false;
+assert.strictEqual(PaperBridge.Settings.closeToTray(), true, "WINNT should keep close-to-tray on by default");
+context.Zotero.isWin = originalZoteroIsWinForCloseToTray;
+prefs.set("extensions.paperbridge.closeToTray", "false");
 assert.doesNotThrow(() => PaperBridge.Util.logError(new Error("log test")));
 assert.doesNotThrow(() => PaperBridge.Util.safeLogError(new Error("safe log test")));
 assert.strictEqual(PaperBridge.Util.sanitizePathSegment('A <bad>: "title" / paper?.md'), "A bad title paper .md");
@@ -861,6 +875,9 @@ assert.strictEqual(PaperBridge.Settings.statusTagPrefix(), "paperbridge/status/"
 prefs.set("extensions.paperbridge.autoCreateNotifications", "false");
 assert.strictEqual(PaperBridge.Settings.autoCreateNotifications(), false);
 prefs.set("extensions.paperbridge.autoCreateNotifications", true);
+prefs.set("extensions.paperbridge.deleteMarkdownWithZoteroItem", "false");
+assert.strictEqual(PaperBridge.Settings.deleteMarkdownWithZoteroItem(), false);
+prefs.set("extensions.paperbridge.deleteMarkdownWithZoteroItem", true);
 prefs.set("extensions.paperbridge.rankTagPrefix", "paperbridge/status/");
 prefs.set("extensions.paperbridge.statusTagPrefix", "");
 assert.strictEqual(PaperBridge.Settings.statusTagPrefix(), "paperbridge/state/");
@@ -1252,12 +1269,18 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   };
   PaperBridge.Tray.addToWindow(hookedWindow);
   assert.ok(PaperBridge.Tray.helperWarmupTimer);
+  assert.ok(PaperBridge.Tray.startupRestoreTimer);
   PaperBridge.Tray.cancelHelperWarmup();
+  PaperBridge.Tray.cancelStartupRestore(true);
   assert.strictEqual(PaperBridge.Tray.helperWarmupTimer, null);
+  assert.strictEqual(PaperBridge.Tray.startupRestoreTimer, null);
   assert.deepStrictEqual(addedTrayEvents.map(event => event.type), ["close"]);
+  PaperBridge.Tray.scheduleStartupRestore();
+  assert.ok(PaperBridge.Tray.startupRestoreTimer);
   hookedWindow.close();
   await PaperBridge.Tray.closeHidePromise;
   assert.strictEqual(hookedHideCalls, 1);
+  assert.strictEqual(PaperBridge.Tray.startupRestoreTimer, null);
   assert.strictEqual(originalCloseCalls, 0);
   hookedWindow.goQuitApplication();
   await PaperBridge.Tray.closeHidePromise;
@@ -1596,7 +1619,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.strictEqual(unregisteredPaneID, "paperbridge-paperbridge");
   const previousDiagnosticsIndex = prefs.get("extensions.paperbridge.index");
   const originalDiagnosticsSendCommand = PaperBridge.Tray.sendCommand;
-  PaperBridge.version = "0.1.35";
+  PaperBridge.version = expectedVersion;
   PaperBridge.Tray.sendCommand = async command => command === "ping";
   prefs.set("extensions.paperbridge.closeToTray", "true");
   zoteroItemsByID.set(mockItem.id, mockItem);
@@ -1622,7 +1645,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     }
   }));
   const diagnosticsReport = await PaperBridge.Diagnostics.buildReport([mockItem]);
-  assert.ok(diagnosticsReport.includes("PaperBridge: 0.1.35"));
+  assert.ok(diagnosticsReport.includes(`PaperBridge: ${expectedVersion}`));
   assert.ok(diagnosticsReport.includes("stale/deleted/missing item entries: 1"));
   assert.ok(diagnosticsReport.includes("helper reachable: yes"));
   assert.ok(diagnosticsReport.includes("Item 42: A Study: On Invalid / Windows * Names"));
@@ -1647,7 +1670,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     diagnosticsAlert = message;
   };
   await PaperBridge.Diagnostics.showReport([mockItem]);
-  assert.ok(clipboardText.includes("PaperBridge: 0.1.35"));
+  assert.ok(clipboardText.includes(`PaperBridge: ${expectedVersion}`));
   assert.ok(diagnosticsAlert.includes("copied to the clipboard"));
   PaperBridge.Util.alert = originalDiagnosticsAlert;
   if (originalClipboardContract === undefined) {
@@ -3815,10 +3838,73 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   }));
   assert.strictEqual(PaperBridge.Notifications.removeIndexEntriesForItemIDs([998], {}), true);
   assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index"))["1:DELETED1"], undefined);
-  PaperBridge.Notifications.notify("delete", "item", [], {
+  await PaperBridge.Notifications.handleDeletedOrTrashedItems([], {
     a: { key: "EXTRADEL", libraryID: 1 }
   });
   assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index"))["1:EXTRADEL"], undefined);
+  const notificationDeletePath = "D:\\Papers\\NotificationDelete.md";
+  const notificationDeleteItem = Object.assign({}, mockItem, {
+    id: 520,
+    key: "NOTEDEL1",
+    deleted: true,
+    getAttachments() {
+      return [];
+    }
+  });
+  zoteroItemsByID.set(520, notificationDeleteItem);
+  pathTypes.set(notificationDeletePath, "regular");
+  fileContentsByPath.set(notificationDeletePath, markdownForKey("NOTEDEL1"));
+  const originalNotificationRecycle = PaperBridge.DeleteQueue.sendFileToRecycleBin;
+  const notificationRecycleCalls = [];
+  PaperBridge.DeleteQueue.sendFileToRecycleBin = async path => {
+    notificationRecycleCalls.push(path);
+    pathTypes.set(path, "missing");
+    fileContentsByPath.delete(path);
+  };
+  prefs.set("extensions.paperbridge.deleteMarkdownWithZoteroItem", true);
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:NOTEDEL1": {
+      note_path: notificationDeletePath,
+      zotero_key: "NOTEDEL1",
+      item_id: 520,
+      library_id: 1
+    }
+  }));
+  assert.deepStrictEqual(
+    plain(await PaperBridge.Notifications.handleDeletedOrTrashedItems([520], {})),
+    { indexChanged: true, checked: 1, recycled: 1, failed: 0 }
+  );
+  assert.deepStrictEqual(notificationRecycleCalls, [notificationDeletePath]);
+  assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index"))["1:NOTEDEL1"], undefined);
+
+  const notificationKeepPath = "D:\\Papers\\NotificationKeep.md";
+  const notificationKeepItem = Object.assign({}, notificationDeleteItem, {
+    id: 521,
+    key: "NOTEKEEP"
+  });
+  zoteroItemsByID.set(521, notificationKeepItem);
+  pathTypes.set(notificationKeepPath, "regular");
+  fileContentsByPath.set(notificationKeepPath, markdownForKey("NOTEKEEP"));
+  prefs.set("extensions.paperbridge.deleteMarkdownWithZoteroItem", false);
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:NOTEKEEP": {
+      note_path: notificationKeepPath,
+      zotero_key: "NOTEKEEP",
+      item_id: 521,
+      library_id: 1
+    }
+  }));
+  notificationRecycleCalls.length = 0;
+  assert.deepStrictEqual(
+    plain(await PaperBridge.Notifications.handleDeletedOrTrashedItems([521], {})),
+    { indexChanged: true, checked: 0, recycled: 0, failed: 0 }
+  );
+  assert.deepStrictEqual(notificationRecycleCalls, []);
+  assert.strictEqual(PaperBridge.Util.pathExistsSync(notificationKeepPath), true);
+  assert.strictEqual(JSON.parse(prefs.get("extensions.paperbridge.index"))["1:NOTEKEEP"], undefined);
+  prefs.set("extensions.paperbridge.deleteMarkdownWithZoteroItem", true);
+  PaperBridge.DeleteQueue.sendFileToRecycleBin = originalNotificationRecycle;
+
   prefs.set("extensions.paperbridge.index", JSON.stringify({
     "1:DELETED1": {
       note_path: "D:/Papers/Deleted.md",

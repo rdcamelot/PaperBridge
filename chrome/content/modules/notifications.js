@@ -44,7 +44,7 @@ PaperBridge.Notifications = {
 
   notify(event, type, ids, extraData) {
     if (type === "item" && (event === "delete" || event === "trash")) {
-      this.removeIndexEntriesForItemIDs(ids, extraData);
+      this.handleDeletedOrTrashedItems(ids, extraData).catch(error => PaperBridge.Util.safeLogError(error));
       return;
     }
 
@@ -165,6 +165,111 @@ PaperBridge.Notifications = {
       PaperBridge.Util.refreshItemTreeColumns();
     }
     return changed;
+  },
+
+  async handleDeletedOrTrashedItems(ids, extraData = {}) {
+    const recycleResult = await this.recycleMarkdownForDeletedItems(ids, extraData);
+    const changed = this.removeIndexEntriesForItemIDs(ids, extraData);
+    if (changed || recycleResult.recycled || recycleResult.failed) {
+      PaperBridge.Util.refreshItemTreeColumns();
+    }
+    return Object.assign({ indexChanged: changed }, recycleResult);
+  },
+
+  async recycleMarkdownForDeletedItems(ids, extraData = {}) {
+    const result = { checked: 0, recycled: 0, failed: 0 };
+    const enabled = PaperBridge.Settings.deleteMarkdownWithZoteroItem?.()
+      ?? PaperBridge.Settings.getBool("deleteMarkdownWithZoteroItem", true);
+    if (!enabled || typeof PaperBridge.DeleteQueue?.recycleMarkdownNoteForItem !== "function") {
+      return result;
+    }
+
+    for (const candidate of this.deletedItemIndexCandidates(ids, extraData)) {
+      result.checked++;
+      const item = candidate.item || this.resolveItemForIndexEntry(candidate.entry);
+      const path = String(candidate.entry?.note_path || "").trim();
+      if (!item || !path) {
+        continue;
+      }
+      try {
+        const existedBefore = PaperBridge.Util.pathExistsSync(path);
+        const recycledPath = await PaperBridge.DeleteQueue.recycleMarkdownNoteForItem(item, path);
+        if (existedBefore && recycledPath && !PaperBridge.Util.pathExistsSync(recycledPath)) {
+          result.recycled++;
+        }
+      }
+      catch (error) {
+        result.failed++;
+        PaperBridge.Util.safeLogError(error);
+      }
+    }
+    return result;
+  },
+
+  deletedItemIndexCandidates(ids, extraData = {}) {
+    const all = PaperBridge.Index.all();
+    const candidates = new Map();
+    const addCandidate = (indexKey, entry, item = null) => {
+      if (!indexKey || !entry || candidates.has(indexKey)) {
+        return;
+      }
+      candidates.set(indexKey, { indexKey, entry, item });
+    };
+
+    for (const id of ids || []) {
+      const numericID = this.positiveIntegerID(id);
+      if (!numericID) {
+        continue;
+      }
+      const item = Zotero.Items.get(numericID) || null;
+      for (const [indexKey, entry] of Object.entries(all)) {
+        if (Number(entry?.item_id || entry?.itemID || 0) === numericID) {
+          addCandidate(indexKey, entry, item);
+        }
+      }
+    }
+
+    for (const value of Object.values(extraData || {})) {
+      const key = value?.key || value?.itemKey || value?.item?.key || value?.old?.key;
+      const libraryID = value?.libraryID || value?.library?.libraryID || value?.item?.libraryID || value?.old?.libraryID;
+      if (!key) {
+        continue;
+      }
+      for (const [indexKey, entry] of Object.entries(all)) {
+        if (entry?.zotero_key && entry.zotero_key !== key) {
+          continue;
+        }
+        if (PaperBridge.Util.isValidLibraryID(libraryID)
+          && PaperBridge.Util.isValidLibraryID(entry?.library_id)
+          && Number(entry.library_id) !== Number(libraryID)) {
+          continue;
+        }
+        if (indexKey === key || indexKey.endsWith(`:${key}`) || entry?.zotero_key === key) {
+          addCandidate(indexKey, entry, value?.item || null);
+        }
+      }
+    }
+
+    return [...candidates.values()];
+  },
+
+  resolveItemForIndexEntry(entry) {
+    if (!entry) {
+      return null;
+    }
+    const itemID = this.positiveIntegerID(entry.item_id || entry.itemID);
+    if (itemID) {
+      const item = Zotero.Items.get(itemID);
+      if (item) {
+        return item;
+      }
+    }
+    const itemKey = String(entry.zotero_key || entry.key || "").trim();
+    const libraryID = Number(entry.library_id || entry.libraryID || 0);
+    if (itemKey && PaperBridge.Util.isValidLibraryID(libraryID) && typeof Zotero.Items?.getByLibraryAndKey === "function") {
+      return Zotero.Items.getByLibraryAndKey(libraryID, itemKey) || null;
+    }
+    return null;
   },
 
   retryItem(itemID, collectionID, reason = "metadata is still incomplete") {

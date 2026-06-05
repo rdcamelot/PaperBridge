@@ -103,8 +103,9 @@
 - 这不是 arXiv 页面无法被解析；更可能是 Zotero/Connector 已经保存过同一论文，重复添加时不会产生明显的新条目，或者 PaperBridge 索引仍指向旧 collection 目录。
 - 若条目确实应该属于另一个 collection，先在 Zotero 中把该条目加入/移动到目标 collection，再选中目标 collection 和该条目，执行 `Tools` -> `PaperBridge` -> `PaperBridge: 移动笔记到当前分类`。
 - 如果已有外部 Markdown 要绑定到该条目，选中条目后用 `PaperBridge: 重连 Markdown 笔记` 手动选择文件；批量旧笔记可用 `PaperBridge: 扫描 Markdown 并重连`。
-- 从 `0.1.8` 开始，插件启动和 item 删除/进 Trash 通知会清理指向 deleted/missing Zotero item 的 PaperBridge index。这个清理只移除插件索引，不会自动删除 Markdown 文件。
-- Markdown 的同步删除仍然只发生在显式的 `x` + `PaperBridge: 清理 x` 流程中：先把 Zotero 条目标记为 rank `x`，再执行清理，插件会把 Zotero item 移入 Trash，并把归属校验通过的 Markdown 送入 Windows 回收站。用户直接在 Zotero 里删除条目时，插件不会自动删除 Markdown，以避免误删手写笔记。
+- 从 `0.1.8` 开始，插件启动和 item 删除/进 Trash 通知会清理指向 deleted/missing Zotero item 的 PaperBridge index。
+- 从 `0.1.41` 开始，普通 Zotero 删除/移入 Trash 也会同步处理已绑定 Markdown：默认设置 `deleteMarkdownWithZoteroItem=true`，插件会先用 PaperBridge frontmatter 校验该 Markdown 确实属于被删除的 Zotero item，再把文件送入 Windows 回收站；校验失败、文件缺失、条目已经无法解析时只清理索引，不会碰文件。这个行为可在 PaperBridge 设置页关闭。
+- `x` + `PaperBridge: 清理 x` 流程仍然保留：先把 Zotero 条目标记为 rank `x`，再执行清理，插件会把 Zotero item 移入 Trash，并把归属校验通过的 Markdown 送入 Windows 回收站。
 - 从 `0.1.9` 开始，可执行 `Tools` -> `PaperBridge` -> `PaperBridge: 运行诊断`。诊断会显示当前索引 stale 数、选中条目的 deleted 状态、collection、note path、文件/附件/frontmatter 状态和托盘 helper 连通性，用来快速确认 PaperBridge 看到的运行时状态是否和 Zotero UI 一致。`0.1.10` 起报告会同时复制到剪贴板，便于直接粘贴排查。
 - 从 `0.1.11` 开始，启动阶段的功能模块加载被隔离：核心模块失败才中断启动，单个列、面板、菜单、托盘、注释等功能模块脚本加载失败只记录错误并继续加载后续模块，避免一个功能异常导致整个插件无法启动。
 - 从 `0.1.13` 开始，诊断报告会容忍单个可选模块缺失，并把缺失模块写成 `unavailable` 行；右侧 PaperBridge 面板按钮的同步异常也会被捕获，按钮会恢复可点击并弹出错误，避免一次失败后卡在禁用状态。
@@ -127,6 +128,23 @@
 - 从 `0.1.30` 开始，tray helper 的 `hide` 命令改为幂等：如果当前没有可见 Zotero 窗口，但仍存在 Zotero 窗口或进程，会返回成功而不是 `NOT_FOUND`，避免 close-to-tray 时序造成误报。
 - 从 `0.1.31` 开始，右侧 PaperBridge 面板保存“简短说明”前会校验 Markdown frontmatter 归属；遇到缺失或残缺 frontmatter 时会先补齐 PaperBridge 必需字段再写入 `summary`，避免把旧笔记修成只有 `summary/updated` 的半残 frontmatter，也避免 stale index 读出其他条目的说明。
 - 从 `0.1.32` 开始，close-to-tray 不再监听 `beforeunload`，并且只拦截目标为 Zotero 顶层窗口、document 或 documentElement 的 `close` 事件；PDF reader、tab、弹窗或内部控件的 close/unload 事件会被放行，避免双击 PDF 或打开 reader 时误触发隐藏到托盘。
+
+## Edge / Zotero Connector 保存分类
+
+现象：
+
+- 打开或点击 Edge 的 Zotero Connector 后，页面可能立即保存到上一次使用的 Zotero collection，例如 `幻觉神经元`，还没来得及在 PaperBridge 中选择新目录。
+
+判断：
+
+- 这是 Zotero Connector 和 Zotero 主程序之间的保存流程，发生在 PaperBridge 自动创建 Markdown 之前。PaperBridge 只能在 Zotero item 已经创建、并收到 Zotero 的 item / collection-item 通知后处理 Markdown，不能拦截浏览器插件的“保存到哪个 Zotero collection”选择。
+- PaperBridge 在收到可靠的 `collection-item` 通知时会按该 collection 创建 Markdown；通知缺少 collection ID 时，会保守使用当前选中的 collection，但前提是该条目确实属于该 collection。这样做是为了避免把 Markdown 建到一个 Zotero item 实际不属于的目录。
+
+建议：
+
+- 保存前先在 Zotero 左侧选中目标 collection，再用 Connector 保存。
+- 如果 Connector 弹出保存面板，优先在 Connector 面板里选择目标 collection。
+- 如果已经保存错 collection，先在 Zotero 中把 item 移动/加入目标 collection，再选中目标 collection 和 item，执行 `Tools` -> `PaperBridge` -> `PaperBridge: 移动笔记到当前分类`。
 
 ## Zotero 仍在运行旧包
 

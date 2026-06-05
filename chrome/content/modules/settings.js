@@ -89,6 +89,10 @@ PaperBridge.Settings = {
     return this.getBool("autoCreateNotifications", true);
   },
 
+  deleteMarkdownWithZoteroItem() {
+    return this.getBool("deleteMarkdownWithZoteroItem", true);
+  },
+
   ignoreCollections() {
     return this.collectionListPref("ignoreCollections");
   },
@@ -122,7 +126,7 @@ PaperBridge.Settings = {
   },
 
   closeToTray() {
-    return this.getBool("closeToTray", Boolean(Zotero.isWin));
+    return this.getBool("closeToTray", Boolean(Zotero.isWin || Services.appinfo?.OS === "WINNT"));
   },
 
   trayAutoHideOnStartup() {

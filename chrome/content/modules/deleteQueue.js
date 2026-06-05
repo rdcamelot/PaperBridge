@@ -100,12 +100,7 @@ PaperBridge.DeleteQueue = {
       throw error;
     }
     try {
-      if (path && PaperBridge.Util.pathExistsSync(path)) {
-        await this.sendFileToRecycleBin(path);
-        if (PaperBridge.Util.pathExistsSync(path)) {
-          throw new Error(`Recycle Bin deletion did not remove Markdown note: ${path}`);
-        }
-      }
+      await this.recycleMarkdownPath(path);
     }
     catch (error) {
       if (zoteroTrashed) {
@@ -119,8 +114,23 @@ PaperBridge.DeleteQueue = {
     PaperBridge.Index.remove(item);
   },
 
-  async getSafeNotePathForCleanup(item) {
-    const path = PaperBridge.Notes.getNotePath(item);
+  async recycleMarkdownNoteForItem(item, path = "") {
+    const safePath = await this.getSafeNotePathForCleanup(item, path);
+    await this.recycleMarkdownPath(safePath);
+    return safePath;
+  },
+
+  async recycleMarkdownPath(path) {
+    if (path && PaperBridge.Util.pathExistsSync(path)) {
+      await this.sendFileToRecycleBin(path);
+      if (PaperBridge.Util.pathExistsSync(path)) {
+        throw new Error(`Recycle Bin deletion did not remove Markdown note: ${path}`);
+      }
+    }
+  },
+
+  async getSafeNotePathForCleanup(item, explicitPath = "") {
+    const path = explicitPath || PaperBridge.Notes.getNotePath(item);
     if (!path || !PaperBridge.Util.pathExistsSync(path)) {
       return path;
     }
