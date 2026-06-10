@@ -93,6 +93,15 @@ PaperBridge.Settings = {
     return this.getBool("deleteMarkdownWithZoteroItem", true);
   },
 
+  externalFileMonitorEnabled() {
+    return this.getBool("externalFileMonitor", true);
+  },
+
+  externalFileRefreshIntervalMS() {
+    const seconds = this.getInt("externalFileRefreshIntervalSeconds", 30);
+    return Math.min(300, Math.max(10, seconds)) * 1000;
+  },
+
   ignoreCollections() {
     return this.collectionListPref("ignoreCollections");
   },

@@ -45,7 +45,7 @@
     </html:div>
   </groupbox>
 
-  <groupbox data-search-strings-raw="automation, Better BibTeX, BBT, collection, linked attachment, 自动化, 自动创建, 分类, 绑定">
+  <groupbox data-search-strings-raw="automation, Better BibTeX, BBT, collection, linked attachment, external file monitor, 自动化, 自动创建, 分类, 绑定, 外部文件, 监控">
     <label><html:h2 data-l10n-id="paperbridge-pref-section-automation"></html:h2></label>
     <checkbox data-l10n-id="paperbridge-pref-use-better-bibtex"
               preference="extensions.paperbridge.useBetterBibTeXCitekey" />
@@ -57,6 +57,8 @@
               preference="extensions.paperbridge.attachLinkedNote" />
     <checkbox data-l10n-id="paperbridge-pref-delete-markdown-with-zotero-item"
               preference="extensions.paperbridge.deleteMarkdownWithZoteroItem" />
+    <checkbox data-l10n-id="paperbridge-pref-external-file-monitor"
+              preference="extensions.paperbridge.externalFileMonitor" />
     <html:div class="paperbridge-pref-grid">
       <html:label for="paperbridge-auto-only-collections"
                   data-l10n-id="paperbridge-pref-auto-only-collections"></html:label>
@@ -71,6 +73,14 @@
                   preference="extensions.paperbridge.ignoreCollections"
                   type="text"
                   data-l10n-id="paperbridge-pref-ignore-collections-input" />
+
+      <html:label for="paperbridge-external-file-refresh-interval"
+                  data-l10n-id="paperbridge-pref-external-file-refresh-interval"></html:label>
+      <html:input id="paperbridge-external-file-refresh-interval"
+                  preference="extensions.paperbridge.externalFileRefreshIntervalSeconds"
+                  type="number"
+                  min="10"
+                  max="300" />
     </html:div>
   </groupbox>
 

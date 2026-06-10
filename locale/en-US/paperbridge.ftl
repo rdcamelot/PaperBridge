@@ -87,12 +87,15 @@ paperbridge-pref-attach-linked-note =
     .label = Attach Markdown notes as linked Zotero attachments
 paperbridge-pref-delete-markdown-with-zotero-item =
     .label = Send linked Markdown notes to the Recycle Bin when Zotero items are deleted
+paperbridge-pref-external-file-monitor =
+    .label = Monitor linked Markdown files for external changes
 paperbridge-pref-auto-only-collections = Only auto-create in collections
 paperbridge-pref-auto-only-collections-input =
     .placeholder = Empty means all collections; separate names with commas or semicolons
 paperbridge-pref-ignore-collections = Ignored collections
 paperbridge-pref-ignore-collections-input =
     .placeholder = These collections never auto-create Markdown notes
+paperbridge-pref-external-file-refresh-interval = External file check interval (seconds)
 
 paperbridge-pref-section-tray = Windows Tray
 paperbridge-pref-close-to-tray =

@@ -87,12 +87,15 @@ paperbridge-pref-attach-linked-note =
     .label = 将 Markdown 笔记作为 Zotero linked attachment 绑定
 paperbridge-pref-delete-markdown-with-zotero-item =
     .label = 删除 Zotero 条目时将绑定的 Markdown 笔记送入回收站
+paperbridge-pref-external-file-monitor =
+    .label = 监控绑定的 Markdown 文件是否被外部修改
 paperbridge-pref-auto-only-collections = 只在这些分类中自动创建
 paperbridge-pref-auto-only-collections-input =
     .placeholder = 留空表示所有分类；可用逗号、分号或换行分隔
 paperbridge-pref-ignore-collections = 忽略的分类
 paperbridge-pref-ignore-collections-input =
     .placeholder = 这些分类永远不会自动创建 Markdown 笔记
+paperbridge-pref-external-file-refresh-interval = 外部文件检查间隔（秒）
 
 paperbridge-pref-section-tray = Windows 托盘
 paperbridge-pref-close-to-tray =

@@ -14,6 +14,8 @@ const prefs = new Map([
   ["extensions.paperbridge.autoCreateOnlyCollections", ""],
   ["extensions.paperbridge.autoCreateNotifications", true],
   ["extensions.paperbridge.deleteMarkdownWithZoteroItem", true],
+  ["extensions.paperbridge.externalFileMonitor", true],
+  ["extensions.paperbridge.externalFileRefreshIntervalSeconds", 30],
   ["extensions.paperbridge.ignoreCollections", ""],
   ["extensions.paperbridge.maxFilenameLength", 180],
   ["extensions.paperbridge.rankTagPrefix", "paperbridge/rank/"],
@@ -714,6 +716,8 @@ assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.markdownRoot
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.closeToTray", true);'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.autoCreateNotifications", true);'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.deleteMarkdownWithZoteroItem", true);'));
+assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.externalFileMonitor", true);'));
+assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.externalFileRefreshIntervalSeconds", 30);'));
 const trayHelperSource = fs.readFileSync(path.join(root, "chrome/content/tray-helper.ps1"), "utf8");
 assert.ok(trayHelperSource.includes("$client.ReceiveTimeout = 1000"));
 assert.ok(trayHelperSource.includes("$client.SendTimeout = 1000"));
@@ -878,6 +882,14 @@ prefs.set("extensions.paperbridge.autoCreateNotifications", true);
 prefs.set("extensions.paperbridge.deleteMarkdownWithZoteroItem", "false");
 assert.strictEqual(PaperBridge.Settings.deleteMarkdownWithZoteroItem(), false);
 prefs.set("extensions.paperbridge.deleteMarkdownWithZoteroItem", true);
+prefs.set("extensions.paperbridge.externalFileMonitor", "false");
+assert.strictEqual(PaperBridge.Settings.externalFileMonitorEnabled(), false);
+prefs.set("extensions.paperbridge.externalFileMonitor", true);
+prefs.set("extensions.paperbridge.externalFileRefreshIntervalSeconds", 1);
+assert.strictEqual(PaperBridge.Settings.externalFileRefreshIntervalMS(), 10000);
+prefs.set("extensions.paperbridge.externalFileRefreshIntervalSeconds", 999);
+assert.strictEqual(PaperBridge.Settings.externalFileRefreshIntervalMS(), 300000);
+prefs.set("extensions.paperbridge.externalFileRefreshIntervalSeconds", 30);
 prefs.set("extensions.paperbridge.rankTagPrefix", "paperbridge/status/");
 prefs.set("extensions.paperbridge.statusTagPrefix", "");
 assert.strictEqual(PaperBridge.Settings.statusTagPrefix(), "paperbridge/state/");
@@ -1406,14 +1418,30 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   PaperBridge.Util.refreshItemTreeColumns = () => {
     monitorRefreshes++;
   };
-  PaperBridge.Notes.frontmatterValidationCache.set("cached", { modifiedTime: 1, ok: true });
+  prefs.set("extensions.paperbridge.externalFileMonitor", true);
+  const monitorCacheKey = PaperBridge.Notes.frontmatterCacheKey("D:\\Papers\\Note.md", mockItem);
+  PaperBridge.Notes.frontmatterValidationCache.set(monitorCacheKey, { modifiedTime: 1, ok: true });
   PaperBridge.Notes.start();
   assert.ok(PaperBridge.Notes.externalRefreshTimer);
+  assert.strictEqual(PaperBridge.Notes.externalFileState.size >= 1, true);
+  assert.strictEqual(PaperBridge.Notes.refreshExternalFileState(false), false);
+  assert.strictEqual(monitorRefreshes, 0);
+  pathTypes.set("D:\\Papers\\Note.md", "missing");
+  assert.strictEqual(PaperBridge.Notes.refreshExternalFileState(false), true);
+  assert.strictEqual(PaperBridge.Notes.frontmatterValidationCache.has(monitorCacheKey), false);
+  assert.strictEqual(monitorRefreshes, 1);
+  pathTypes.set("D:\\Papers\\Note.md", "regular");
+  PaperBridge.Notes.frontmatterValidationCache.set("cached", { modifiedTime: 1, ok: true });
   PaperBridge.Notes.refreshExternalFileState();
   assert.strictEqual(PaperBridge.Notes.frontmatterValidationCache.size, 0);
-  assert.strictEqual(monitorRefreshes, 1);
+  assert.strictEqual(monitorRefreshes, 2);
   PaperBridge.Notes.stop();
   assert.strictEqual(PaperBridge.Notes.externalRefreshTimer, null);
+  assert.strictEqual(PaperBridge.Notes.externalFileState.size, 0);
+  prefs.set("extensions.paperbridge.externalFileMonitor", false);
+  PaperBridge.Notes.start();
+  assert.strictEqual(PaperBridge.Notes.externalRefreshTimer, null);
+  prefs.set("extensions.paperbridge.externalFileMonitor", true);
   PaperBridge.Util.refreshItemTreeColumns = originalRefreshColumnsForMonitor;
   const itemPaneRows = plain(PaperBridge.ItemPane.rowsForItem(mockItem));
   assert.ok(itemPaneRows.some(row => row.labelL10nID === "paperbridge-item-pane-row-next" && row.value === "Open Markdown note"));
@@ -2401,6 +2429,20 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   }));
   assert.strictEqual(PaperBridge.Index.removeByLibraryAndKey(1, "DELETED1"), true);
   assert.deepStrictEqual(JSON.parse(prefs.get("extensions.paperbridge.index")), {});
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:KEYONLY1": {
+      note_path: "D:/Papers/Key Only.md",
+      zotero_key: "KEYONLY1",
+      item_id: 777,
+      library_id: 1
+    }
+  }));
+  assert.strictEqual(PaperBridge.Index.removeByLibraryAndKey(null, "KEYONLY1"), true);
+  assert.deepStrictEqual(JSON.parse(prefs.get("extensions.paperbridge.index")), {});
+  prefs.set("extensions.paperbridge.index", JSON.stringify({
+    "1:CACHED01": { note_path: "D:/Papers/Cached.md", zotero_key: "CACHED01" }
+  }));
+  assert.strictEqual(PaperBridge.Index.all(), PaperBridge.Index.all());
 
   prefs.set("extensions.paperbridge.index", "{}");
   attachmentByID.set(100, {

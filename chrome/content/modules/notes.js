@@ -2,14 +2,19 @@ PaperBridge = PaperBridge || {};
 
 PaperBridge.Notes = {
   frontmatterValidationCache: new Map(),
+  frontmatterValidationCacheLimit: 500,
   externalRefreshTimer: null,
-  externalRefreshIntervalMS: 8000,
+  externalFileState: new Map(),
 
   start() {
-    if (this.externalRefreshTimer || typeof setInterval !== "function") {
+    if (this.externalRefreshTimer || typeof setInterval !== "function" || !PaperBridge.Settings.externalFileMonitorEnabled()) {
       return;
     }
-    this.externalRefreshTimer = setInterval(() => this.refreshExternalFileState(), this.externalRefreshIntervalMS);
+    this.snapshotExternalFileState();
+    this.externalRefreshTimer = setInterval(
+      () => this.refreshExternalFileState(false),
+      PaperBridge.Settings.externalFileRefreshIntervalMS()
+    );
   },
 
   stop() {
@@ -18,9 +23,108 @@ PaperBridge.Notes = {
       this.externalRefreshTimer = null;
     }
     this.frontmatterValidationCache.clear();
+    this.externalFileState.clear();
   },
 
-  refreshExternalFileState() {
+  refreshExternalFileState(force = true) {
+    if (force) {
+      this.frontmatterValidationCache.clear();
+      this.snapshotExternalFileState();
+      PaperBridge.Util.refreshItemTreeColumns();
+      return true;
+    }
+
+    const changedPaths = this.changedExternalNotePaths();
+    if (!changedPaths.length) {
+      return false;
+    }
+    for (const path of changedPaths) {
+      this.clearFrontmatterCacheForPath(path);
+    }
+    PaperBridge.Util.refreshItemTreeColumns();
+    return true;
+  },
+
+  snapshotExternalFileState() {
+    this.externalFileState.clear();
+    for (const path of this.trackedNotePaths()) {
+      this.externalFileState.set(
+        PaperBridge.Util.normalizePathForCompare(path),
+        this.externalFileSnapshot(path)
+      );
+    }
+    return this.externalFileState.size;
+  },
+
+  changedExternalNotePaths() {
+    const changed = [];
+    const missingFromIndex = new Set(this.externalFileState.keys());
+    for (const path of this.trackedNotePaths()) {
+      const key = PaperBridge.Util.normalizePathForCompare(path);
+      missingFromIndex.delete(key);
+      const snapshot = this.externalFileSnapshot(path);
+      const previous = this.externalFileState.get(key);
+      this.externalFileState.set(key, snapshot);
+      if (previous && !this.externalFileSnapshotsEqual(previous, snapshot)) {
+        changed.push(path);
+      }
+    }
+    for (const key of missingFromIndex) {
+      this.externalFileState.delete(key);
+    }
+    return changed;
+  },
+
+  trackedNotePaths() {
+    const paths = [];
+    const seen = new Set();
+    for (const entry of Object.values(PaperBridge.Index.all())) {
+      const path = String(entry?.note_path || "").trim();
+      const key = PaperBridge.Util.normalizePathForCompare(path);
+      if (!path || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      paths.push(path);
+    }
+    return paths;
+  },
+
+  externalFileSnapshot(path) {
+    const exists = PaperBridge.Util.pathExistsSync(path);
+    return {
+      exists,
+      modifiedTime: exists ? PaperBridge.Util.fileModifiedTimeSync(path) : null
+    };
+  },
+
+  externalFileSnapshotsEqual(left, right) {
+    return Boolean(left)
+      && Boolean(right)
+      && left.exists === right.exists
+      && left.modifiedTime === right.modifiedTime;
+  },
+
+  clearFrontmatterCacheForPath(path) {
+    const prefix = `${PaperBridge.Util.normalizePathForCompare(path)}|`;
+    for (const key of this.frontmatterValidationCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.frontmatterValidationCache.delete(key);
+      }
+    }
+  },
+
+  pruneFrontmatterValidationCache() {
+    while (this.frontmatterValidationCache.size > this.frontmatterValidationCacheLimit) {
+      const oldestKey = this.frontmatterValidationCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      this.frontmatterValidationCache.delete(oldestKey);
+    }
+  },
+
+  invalidateFrontmatterValidationCache() {
     this.frontmatterValidationCache.clear();
     PaperBridge.Util.refreshItemTreeColumns();
   },
@@ -687,6 +791,7 @@ PaperBridge.Notes = {
       const ok = this.validateFrontmatterContent(Zotero.File.getContents(path), item).ok;
       if (modifiedTime !== null) {
         this.frontmatterValidationCache.set(cacheKey, { modifiedTime, ok });
+        this.pruneFrontmatterValidationCache();
       }
       return ok;
     }

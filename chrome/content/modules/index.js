@@ -1,20 +1,35 @@
 PaperBridge = PaperBridge || {};
 
 PaperBridge.Index = {
+  cacheRaw: null,
+  cacheParsed: null,
+
   all() {
     const raw = PaperBridge.Settings.getString("index", "{}");
+    if (raw === this.cacheRaw && this.cacheParsed && typeof this.cacheParsed === "object") {
+      return this.cacheParsed;
+    }
+
     try {
       const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      const all = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      this.cacheRaw = raw;
+      this.cacheParsed = all;
+      return all;
     }
     catch (error) {
       PaperBridge.Util.safeLogError(error);
+      this.cacheRaw = raw;
+      this.cacheParsed = {};
       return {};
     }
   },
 
   save(all) {
-    PaperBridge.Settings.set("index", JSON.stringify(all));
+    const raw = JSON.stringify(all || {});
+    this.cacheRaw = raw;
+    this.cacheParsed = all || {};
+    PaperBridge.Settings.set("index", raw);
   },
 
   get(item) {
@@ -52,16 +67,24 @@ PaperBridge.Index = {
 
   remove(item) {
     if (!item?.key) {
-      return;
+      return false;
     }
     const all = this.all();
     const key = this.itemIndexKey(item);
     const legacyKey = this.legacyItemKey(item);
-    delete all[key];
+    let changed = false;
+    if (key && Object.prototype.hasOwnProperty.call(all, key)) {
+      delete all[key];
+      changed = true;
+    }
     if (legacyKey !== key && this.canRemoveLegacyEntry(item, all[legacyKey])) {
       delete all[legacyKey];
+      changed = true;
     }
-    this.save(all);
+    if (changed) {
+      this.save(all);
+    }
+    return changed;
   },
 
   removeByItemID(itemID) {
@@ -93,12 +116,15 @@ PaperBridge.Index = {
 
     const all = this.all();
     let changed = false;
-    for (const indexKey of [numericLibraryID ? `${numericLibraryID}:${key}` : "", key].filter(Boolean)) {
-      const entry = all[indexKey];
-      if (!entry || entry.zotero_key && entry.zotero_key !== key) {
-        continue;
+    const directKeys = [numericLibraryID ? `${numericLibraryID}:${key}` : "", key].filter(Boolean);
+    for (const indexKey of directKeys) {
+      if (this.removeEntryByIndexKey(all, indexKey, key, numericLibraryID)) {
+        changed = true;
       }
-      if (numericLibraryID && PaperBridge.Util.isValidLibraryID(entry.library_id) && Number(entry.library_id) !== numericLibraryID) {
+    }
+
+    for (const [indexKey, entry] of Object.entries(all)) {
+      if (!this.entryMatchesLibraryAndKey(indexKey, entry, numericLibraryID, key)) {
         continue;
       }
       delete all[indexKey];
@@ -108,6 +134,33 @@ PaperBridge.Index = {
       this.save(all);
     }
     return changed;
+  },
+
+  removeEntryByIndexKey(all, indexKey, itemKey, libraryID) {
+    const entry = all[indexKey];
+    if (!entry || !this.entryMatchesLibraryAndKey(indexKey, entry, libraryID, itemKey)) {
+      return false;
+    }
+    delete all[indexKey];
+    return true;
+  },
+
+  entryMatchesLibraryAndKey(indexKey, entry, libraryID, itemKey) {
+    const key = String(itemKey || "").trim();
+    if (!key) {
+      return false;
+    }
+    const entryKey = this.entryItemKey(indexKey, entry);
+    if (entryKey !== key) {
+      return false;
+    }
+    if (PaperBridge.Util.isValidLibraryID(libraryID)) {
+      const entryLibraryID = this.entryLibraryID(indexKey, entry);
+      if (PaperBridge.Util.isValidLibraryID(entryLibraryID) && Number(entryLibraryID) !== Number(libraryID)) {
+        return false;
+      }
+    }
+    return true;
   },
 
   pruneStaleEntries() {

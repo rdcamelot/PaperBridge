@@ -132,6 +132,7 @@ PaperBridge.Notifications = {
       const path = await PaperBridge.Notes.createNoteForItem(item, { collection });
       this.retryCounts.delete(itemID);
       this.showAutoCreateNotice(item, "complete", { collection, path, force: true });
+      this.clearNoticeState(itemID);
     }
     catch (error) {
       PaperBridge.Util.safeLogError(error);
@@ -209,6 +210,9 @@ PaperBridge.Notifications = {
   deletedItemIndexCandidates(ids, extraData = {}) {
     const all = PaperBridge.Index.all();
     const candidates = new Map();
+    const itemIDs = new Set();
+    const itemsByID = new Map();
+    const keyedEvents = [];
     const addCandidate = (indexKey, entry, item = null) => {
       if (!indexKey || !entry || candidates.has(indexKey)) {
         return;
@@ -221,12 +225,8 @@ PaperBridge.Notifications = {
       if (!numericID) {
         continue;
       }
-      const item = Zotero.Items.get(numericID) || null;
-      for (const [indexKey, entry] of Object.entries(all)) {
-        if (Number(entry?.item_id || entry?.itemID || 0) === numericID) {
-          addCandidate(indexKey, entry, item);
-        }
-      }
+      itemIDs.add(numericID);
+      itemsByID.set(numericID, Zotero.Items.get(numericID) || null);
     }
 
     for (const value of Object.values(extraData || {})) {
@@ -235,17 +235,24 @@ PaperBridge.Notifications = {
       if (!key) {
         continue;
       }
-      for (const [indexKey, entry] of Object.entries(all)) {
-        if (entry?.zotero_key && entry.zotero_key !== key) {
-          continue;
-        }
-        if (PaperBridge.Util.isValidLibraryID(libraryID)
-          && PaperBridge.Util.isValidLibraryID(entry?.library_id)
-          && Number(entry.library_id) !== Number(libraryID)) {
-          continue;
-        }
-        if (indexKey === key || indexKey.endsWith(`:${key}`) || entry?.zotero_key === key) {
-          addCandidate(indexKey, entry, value?.item || null);
+      keyedEvents.push({ key, libraryID, item: value?.item || null });
+    }
+
+    if (!itemIDs.size && !keyedEvents.length) {
+      return [];
+    }
+
+    for (const [indexKey, entry] of Object.entries(all)) {
+      const entryItemID = this.positiveIntegerID(entry?.item_id || entry?.itemID);
+      if (entryItemID && itemIDs.has(entryItemID)) {
+        addCandidate(indexKey, entry, itemsByID.get(entryItemID) || null);
+        continue;
+      }
+
+      for (const event of keyedEvents) {
+        if (PaperBridge.Index.entryMatchesLibraryAndKey(indexKey, entry, event.libraryID, event.key)) {
+          addCandidate(indexKey, entry, event.item);
+          break;
         }
       }
     }
@@ -282,6 +289,7 @@ PaperBridge.Notifications = {
         reason: `${reason} after ${this.maxRetries} retries`,
         force: true
       });
+      this.clearNoticeState(itemID);
       return;
     }
     this.retryCounts.set(itemID, retries);

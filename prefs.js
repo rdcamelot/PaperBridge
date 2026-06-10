@@ -9,6 +9,8 @@ pref("extensions.paperbridge.autoCreateOnlyCollections", "");
 pref("extensions.paperbridge.ignoreCollections", "");
 pref("extensions.paperbridge.attachLinkedNote", true);
 pref("extensions.paperbridge.deleteMarkdownWithZoteroItem", true);
+pref("extensions.paperbridge.externalFileMonitor", true);
+pref("extensions.paperbridge.externalFileRefreshIntervalSeconds", 30);
 pref("extensions.paperbridge.closeToTray", true);
 pref("extensions.paperbridge.trayAutoHideOnStartup", false);
 pref("extensions.paperbridge.trayPort", 23128);
