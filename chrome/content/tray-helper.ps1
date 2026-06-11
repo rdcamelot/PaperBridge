@@ -44,6 +44,12 @@ public static class PaperBridgeWin32 {
     [DllImport("user32.dll")]
     public static extern bool SetProcessDPIAware();
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder text, int count);
+
     public static IntPtr[] FindWindowsForProcess(int processId, bool visibleOnly) {
         var windows = new List<IntPtr>();
         EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
@@ -55,6 +61,18 @@ public static class PaperBridgeWin32 {
             return true;
         }, IntPtr.Zero);
         return windows.ToArray();
+    }
+
+    public static string WindowText(IntPtr hWnd) {
+        var text = new System.Text.StringBuilder(512);
+        GetWindowText(hWnd, text, text.Capacity);
+        return text.ToString();
+    }
+
+    public static string WindowClass(IntPtr hWnd) {
+        var text = new System.Text.StringBuilder(256);
+        GetClassName(hWnd, text, text.Capacity);
+        return text.ToString();
     }
 }
 "@
@@ -148,13 +166,36 @@ function Get-ZoteroWindows {
     return $windows
 }
 
+function Test-ZoteroMainWindow {
+    param([IntPtr]$Hwnd)
+
+    if ($Hwnd -eq [IntPtr]::Zero) {
+        return $false
+    }
+    $class = [PaperBridgeWin32]::WindowClass($Hwnd)
+    $title = [PaperBridgeWin32]::WindowText($Hwnd)
+    return $class -eq "MozillaWindowClass" -and $title -like "*Zotero*"
+}
+
+function Get-ZoteroMainWindows {
+    param([switch]$VisibleOnly)
+
+    $windows = if ($VisibleOnly) {
+        @(Get-ZoteroWindows -VisibleOnly)
+    }
+    else {
+        @(Get-ZoteroWindows)
+    }
+    return @($windows | Where-Object { Test-ZoteroMainWindow $_ })
+}
+
 function Hide-Zotero {
-    $windows = @(Get-ZoteroWindows -VisibleOnly)
+    $windows = @(Get-ZoteroMainWindows -VisibleOnly)
     if ($windows.Count -eq 0) {
         # Treat hide as idempotent. During close-to-tray the visible top-level
         # window can disappear before the helper receives the command, and a
         # second hide command may arrive while Zotero is already hidden.
-        $allWindows = @(Get-ZoteroWindows)
+        $allWindows = @(Get-ZoteroMainWindows)
         if ($allWindows.Count -gt 0 -or @(Get-ZoteroProcesses).Count -gt 0) {
             return $true
         }
@@ -168,9 +209,9 @@ function Hide-Zotero {
 }
 
 function Show-Zotero {
-    $windows = @($script:hiddenWindowHandles | Where-Object { [PaperBridgeWin32]::IsWindow($_) })
+    $windows = @($script:hiddenWindowHandles | Where-Object { [PaperBridgeWin32]::IsWindow($_) -and (Test-ZoteroMainWindow $_) })
     if ($windows.Count -eq 0) {
-        $windows = @(Get-ZoteroWindows)
+        $windows = @(Get-ZoteroMainWindows)
     }
     if ($windows.Count -eq 0) {
         return $false
@@ -210,13 +251,15 @@ function Request-Zotero-Quit {
         catch {}
     }
 
-    $windows = @(Get-ZoteroWindows)
+    $windows = @(Get-ZoteroMainWindows)
+    if ($windows.Count -eq 0) {
+        $windows = @(Get-ZoteroWindows)
+    }
     foreach ($hwnd in $windows) {
         [void][PaperBridgeWin32]::ShowWindow($hwnd, 9)
         [void][PaperBridgeWin32]::PostMessage($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
     }
 
-    Stop-Helper
     return $true
 }
 
@@ -228,7 +271,35 @@ $tray = [System.Windows.Forms.NotifyIcon]::new()
 $tray.Text = "Zotero PaperBridge"
 $script:stopping = $false
 $script:processCheckTicks = 0
+$script:processLaunchCheckTicks = 0
 $script:hiddenWindowHandles = @()
+$script:knownZoteroProcessIDs = @{}
+
+function Update-KnownZoteroProcesses {
+    $current = @{}
+    foreach ($process in @(Get-ZoteroProcesses)) {
+        $current[[int]$process.Id] = $true
+    }
+    $script:knownZoteroProcessIDs = $current
+}
+
+function Show-Zotero-When-NewProcessAppears {
+    $processes = @(Get-ZoteroProcesses)
+    $current = @{}
+    $hasNewProcess = $false
+    foreach ($process in $processes) {
+        $id = [int]$process.Id
+        $current[$id] = $true
+        if (!$script:knownZoteroProcessIDs.ContainsKey($id)) {
+            $hasNewProcess = $true
+        }
+    }
+    $script:knownZoteroProcessIDs = $current
+
+    if ($hasNewProcess -and !(Zotero-IsVisible)) {
+        Show-Zotero | Out-Null
+    }
+}
 
 function Stop-Helper {
     param([bool]$RestoreZotero = $false)
@@ -273,6 +344,7 @@ $tray.add_MouseClick({
     }
 })
 $tray.Visible = $true
+Update-KnownZoteroProcesses
 
 function Write-HttpResponse {
     param(
@@ -344,6 +416,12 @@ function Handle-Command {
 $timer = [System.Windows.Forms.Timer]::new()
 $timer.Interval = 250
 $timer.add_Tick({
+    $script:processLaunchCheckTicks++
+    if ($script:processLaunchCheckTicks -ge 2) {
+        $script:processLaunchCheckTicks = 0
+        Show-Zotero-When-NewProcessAppears
+    }
+
     $script:processCheckTicks++
     if ($script:processCheckTicks -ge 20) {
         $script:processCheckTicks = 0

@@ -541,6 +541,10 @@ tools/build-xpi.ps1
 118. Windows tray helper 的 `hide` 命令改为幂等操作：如果没有可见 Zotero 窗口但仍能找到 Zotero 窗口或进程，会视为已经隐藏成功，避免 close 事件时序导致误弹 `Could not hide Zotero through the PaperBridge tray helper`。
 119. 保存右侧 PaperBridge 面板的“简短说明”时，会先校验 Markdown frontmatter 是否属于当前 Zotero 条目；如果 frontmatter 缺失或残缺，会补齐 PaperBridge 必需字段后再写入 `summary`，避免生成只有 `summary/updated` 的半残笔记，也避免 stale index 显示其他条目的说明。
 120. close-to-tray 不再监听 `beforeunload`，并且只拦截目标为 Zotero 顶层窗口的 `close` 事件；PDF reader、tab、弹窗或内部控件的 close/unload 事件不会再触发隐藏到托盘，避免双击 PDF 或打开 reader 时误把 Zotero 隐藏。
+121. 自动创建 Markdown 默认延迟改为 8 秒，并支持在设置页调整为 3-60 秒；自动创建默认只处理论文/文献型 Zotero item type，跳过 `webpage` 等普通网页，减少误点 Zotero Connector 保存 Codeforces 等网页后立即生成 Markdown 的副作用。
+122. Windows tray helper 改为通过 `wscript.exe` 无控制台宿主启动隐藏 PowerShell，并给回收站删除 PowerShell 调用加隐藏/非交互参数，避免启动 Zotero 或清理 Markdown 时留下空白终端窗口。
+123. close-to-tray 在 Zotero 启动后的保护期内会取消 `close` / `quit-application-requested` 但不执行隐藏，避免 Zotero 初始化或重建窗口时的内部关闭事件被误处理成隐藏到托盘，从而留下“后台有 zotero.exe 但没有窗口”的状态。
+124. tray helper 隐藏/恢复窗口时只操作真正的 Zotero 主窗口（`MozillaWindowClass` 且标题包含 `Zotero`），不再把 `Battery Watcher`、RemoteWindow、IME 等内部窗口一起隐藏，避免 hide/show 后主窗口无法恢复。
 
 尚未完成：
 
@@ -558,7 +562,7 @@ powershell -ExecutionPolicy Bypass -File tools\build-xpi.ps1
 生成：
 
 ```text
-dist\paperbridge-0.1.42.xpi
+dist\paperbridge-0.1.48.xpi
 dist\paperbridge-latest.xpi
 ```
 
@@ -616,7 +620,7 @@ powershell -ExecutionPolicy Bypass -File tools\verify-zotero-install.ps1
 脚本会检查 `extensions.json` 中是否存在 `paperbridge@example.com`、版本是否匹配、插件是否启用、登记的 XPI 路径是否存在，并读取 profile 中实际安装的 XPI manifest 和 SHA256，与当前 `dist\paperbridge-latest.xpi` 对比。它只读取 profile，不会改写 Zotero 配置。
 如果只是想确认 Zotero 已经登记该插件、但允许它暂时处于禁用或待重启状态，可以加 `-AllowDisabled`。
 
-当前最新运行期修复包为 `0.1.42`；如果 profile 中仍显示更早版本，或者脚本提示 profile XPI 的 SHA256 与当前 `dist\paperbridge-latest.xpi` 不一致，需要重新安装 `dist\paperbridge-latest.xpi` 并重启 Zotero。
+当前最新运行期修复包为 `0.1.48`；如果 profile 中仍显示更早版本，或者脚本提示 profile XPI 的 SHA256 与当前 `dist\paperbridge-latest.xpi` 不一致，需要重新安装 `dist\paperbridge-latest.xpi` 并重启 Zotero。
 开发调试时，如果 PaperBridge 已经通过 Zotero UI 登记过，但拖拽更新后 profile 仍停在旧 XPI，可以在关闭 Zotero 后运行：
 
 ```powershell
@@ -631,7 +635,7 @@ powershell -ExecutionPolicy Bypass -File tools\dev-install-to-zotero-profile.ps1
 powershell -ExecutionPolicy Bypass -File tools\diagnose-xpi.ps1
 ```
 
-它不会修改 Zotero，只用于确认当前 `dist\paperbridge-0.1.42.xpi` / `dist\paperbridge-latest.xpi` 是否是可被 Zotero 9.0.4 接受的结构和兼容范围，并提示 profile 中是否已有登记记录。
+它不会修改 Zotero，只用于确认当前 `dist\paperbridge-0.1.48.xpi` / `dist\paperbridge-latest.xpi` 是否是可被 Zotero 9.0.4 接受的结构和兼容范围，并提示 profile 中是否已有登记记录。
 验证脚本本身也纳入本地验证的 `-SelfTest`，避免 profile 解析和状态判断逻辑退化。
 
 安装失败、列不可见、托盘关闭等问题的排查和修复记录见 `docs/troubleshooting.md`。

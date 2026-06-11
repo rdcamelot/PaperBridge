@@ -95,6 +95,10 @@ paperbridge-pref-auto-only-collections-input =
 paperbridge-pref-ignore-collections = Ignored collections
 paperbridge-pref-ignore-collections-input =
     .placeholder = These collections never auto-create Markdown notes
+paperbridge-pref-auto-create-delay = Auto-create delay (seconds)
+paperbridge-pref-auto-create-item-types = Auto-create item types
+paperbridge-pref-auto-create-item-types-input =
+    .placeholder = Empty means all regular item types; separate names with commas or semicolons
 paperbridge-pref-external-file-refresh-interval = External file check interval (seconds)
 
 paperbridge-pref-section-tray = Windows Tray

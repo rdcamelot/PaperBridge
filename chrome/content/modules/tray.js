@@ -16,9 +16,12 @@ PaperBridge.Tray = {
   quickPingTimeoutMS: 250,
   helperWarmupDelayMS: 1500,
   startupRestoreDelayMS: 2200,
+  interceptGraceMS: 30000,
+  interceptReadyTime: 0,
 
   start() {
     this.allowQuit = false;
+    this.deferTrayInterception();
     this.registerQuitObserver();
     this.scheduleHelperWarmup();
   },
@@ -36,6 +39,7 @@ PaperBridge.Tray = {
     window.addEventListener("close", state.closeHandler, true);
     this.hookWindowCloseMethods(window, state);
     this.handlers.set(window, state);
+    this.deferTrayInterception();
     this.scheduleHelperWarmup();
 
     if (this.shouldUseTray() && PaperBridge.Settings.trayAutoHideOnStartup() && !this.autoHidden) {
@@ -72,7 +76,7 @@ PaperBridge.Tray = {
     if (this.helperWarmupPromise) {
       await this.helperWarmupPromise.catch(() => {});
     }
-    if (this.helperStarted) {
+    if (this.helperStarted && !this.allowQuit) {
       await this.sendCommand("quit-helper", 1).catch(() => {});
     }
     this.helperStarted = false;
@@ -148,6 +152,10 @@ PaperBridge.Tray = {
         }
         if (this.allowQuit || !this.shouldUseTray() || this.isSystemQuit(data)) {
           this.allowQuit = true;
+          return;
+        }
+        if (!this.readyForTrayInterception()) {
+          this.cancelQuit(subject);
           return;
         }
         this.cancelQuit(subject);
@@ -228,14 +236,29 @@ PaperBridge.Tray = {
       return false;
     }
 
+    this.cancelCloseEvent(event);
+    if (!this.readyForTrayInterception()) {
+      return true;
+    }
+    this.scheduleHide(window);
+    return true;
+  },
+
+  cancelCloseEvent(event) {
     event?.preventDefault?.();
     event?.stopPropagation?.();
     event?.stopImmediatePropagation?.();
     if (event) {
       event.returnValue = false;
     }
-    this.scheduleHide(window);
-    return true;
+  },
+
+  deferTrayInterception() {
+    this.interceptReadyTime = Math.max(this.interceptReadyTime || 0, Date.now() + this.interceptGraceMS);
+  },
+
+  readyForTrayInterception() {
+    return Date.now() >= (this.interceptReadyTime || 0);
   },
 
   isTopLevelWindowCloseEvent(event, window) {
@@ -381,7 +404,6 @@ PaperBridge.Tray = {
 
   async quitZotero(window) {
     this.allowQuit = true;
-    await this.stop();
     if (window?.goQuitApplication) {
       window.goQuitApplication();
       return;
@@ -409,7 +431,10 @@ PaperBridge.Tray = {
 
     const scriptPath = await this.ensureHelperScript();
     const args = [
+      "-NoLogo",
       "-NoProfile",
+      "-NonInteractive",
+      "-STA",
       "-ExecutionPolicy",
       "Bypass",
       "-WindowStyle",
@@ -427,12 +452,47 @@ PaperBridge.Tray = {
       "-QuitRequestPath",
       this.quitRequestPath()
     ];
-    PaperBridge.Util.runProcess(powershell, args, false);
+    await this.runHiddenHelperProcess(powershell, args);
     this.helperStarted = true;
     if (!(await this.sendCommand("ping", 8, this.commandTimeoutMS))) {
       this.helperStarted = false;
       throw new Error(`The PaperBridge tray helper did not start on port ${PaperBridge.Settings.trayPort()}. The port may already be in use.`);
     }
+  },
+
+  async runHiddenHelperProcess(powershell, args) {
+    const wscript = "C:\\Windows\\System32\\wscript.exe";
+    if (!PaperBridge.Util.pathExistsSync(wscript)) {
+      PaperBridge.Util.runProcess(powershell, args, false);
+      return;
+    }
+
+    const commandLine = [powershell, ...args].map(value => this.quoteWindowsArg(value)).join(" ");
+    const launcherPath = await this.ensureHiddenHelperLauncher(commandLine);
+    PaperBridge.Util.runProcess(wscript, ["//B", launcherPath], false);
+  },
+
+  async ensureHiddenHelperLauncher(commandLine) {
+    const tempDir = Services.dirsvc.get("TmpD", Ci.nsIFile).path;
+    const launcherPath = PaperBridge.Util.pathJoin(tempDir, "paperbridge-start-tray-helper.vbs");
+    const script = [
+      'Set shell = CreateObject("WScript.Shell")',
+      `shell.Run ${this.vbsStringLiteral(commandLine)}, 0, False`
+    ].join("\r\n");
+    await Zotero.File.putContentsAsync(launcherPath, script);
+    return launcherPath;
+  },
+
+  quoteWindowsArg(value) {
+    const text = String(value ?? "");
+    if (text && !/[ \t"]/.test(text)) {
+      return text;
+    }
+    return `"${text.replace(/(\\*)"/g, "$1$1\\\"").replace(/\\+$/g, "$&$&")}"`;
+  },
+
+  vbsStringLiteral(value) {
+    return `"${String(value ?? "").replace(/"/g, '""')}"`;
   },
 
   async ensureHelperScript() {

@@ -40,11 +40,15 @@ PaperBridge.Settings = {
     return Number.isFinite(value) ? value : fallback;
   },
 
-  collectionListPref(name) {
+  listPref(name) {
     return this.getString(name, "")
       .split(/[\r\n,;\uFF0C\uFF1B]+/)
       .map(value => value.trim())
       .filter(Boolean);
+  },
+
+  collectionListPref(name) {
+    return this.listPref(name);
   },
 
   normalizeCollectionName(name) {
@@ -87,6 +91,24 @@ PaperBridge.Settings = {
 
   autoCreateNotifications() {
     return this.getBool("autoCreateNotifications", true);
+  },
+
+  autoCreateDelayMS() {
+    const seconds = this.getInt("autoCreateDelaySeconds", 8);
+    return Math.min(60, Math.max(3, seconds)) * 1000;
+  },
+
+  autoCreateItemTypes() {
+    return this.listPref("autoCreateItemTypes").map(value => this.normalizeItemTypeName(value));
+  },
+
+  normalizeItemTypeName(name) {
+    return String(name || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  },
+
+  itemTypeNameMatches(name, list) {
+    const normalized = this.normalizeItemTypeName(name);
+    return Boolean(normalized) && list.some(value => this.normalizeItemTypeName(value) === normalized);
   },
 
   deleteMarkdownWithZoteroItem() {

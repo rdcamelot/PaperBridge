@@ -5,6 +5,8 @@ pref("extensions.paperbridge.useBetterBibTeXCitekey", true);
 pref("extensions.paperbridge.fallbackCitekeyPattern", "{{firstCreator}}{{year}}_{{firstTitleWord}}");
 pref("extensions.paperbridge.autoCreate", true);
 pref("extensions.paperbridge.autoCreateNotifications", true);
+pref("extensions.paperbridge.autoCreateDelaySeconds", 8);
+pref("extensions.paperbridge.autoCreateItemTypes", "journalArticle,conferencePaper,preprint,report,thesis,manuscript,book,bookSection,dataset,patent,presentation");
 pref("extensions.paperbridge.autoCreateOnlyCollections", "");
 pref("extensions.paperbridge.ignoreCollections", "");
 pref("extensions.paperbridge.attachLinkedNote", true);

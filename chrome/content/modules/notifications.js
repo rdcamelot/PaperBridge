@@ -71,9 +71,13 @@ PaperBridge.Notifications = {
     }
   },
 
-  scheduleItem(itemID, collectionID = null, delay = 3000) {
+  scheduleItem(itemID, collectionID = null, delay = null) {
     const numericID = this.positiveIntegerID(itemID);
     if (!numericID) {
+      return;
+    }
+    const item = Zotero.Items.get(numericID);
+    if (item && !this.shouldAutoCreateForItem(item)) {
       return;
     }
     clearTimeout(this.timers.get(numericID));
@@ -83,7 +87,8 @@ PaperBridge.Notifications = {
       ? numericCollectionID
       : existing.collectionID || null;
     this.pending.set(numericID, { collectionID: nextCollectionID });
-    if (delay <= 3000) {
+    const resolvedDelay = this.autoCreateDelay(delay);
+    if (resolvedDelay <= 3000) {
       this.showQueuedNotice(numericID, nextCollectionID);
     }
 
@@ -92,7 +97,7 @@ PaperBridge.Notifications = {
       const pending = this.pending.get(numericID) || {};
       this.pending.delete(numericID);
       this.tryAutoCreate(numericID, pending.collectionID).catch(error => PaperBridge.Util.logError(error));
-    }, delay);
+    }, resolvedDelay);
     this.timers.set(numericID, timer);
   },
 
@@ -104,7 +109,7 @@ PaperBridge.Notifications = {
       this.clearNoticeState(itemID);
       return;
     }
-    if (!item || !PaperBridge.Notes.isRegularItem(item) || item.deleted) {
+    if (!this.shouldAutoCreateForItem(item)) {
       return;
     }
     const collectionIDs = this.collectionIDsForItem(item);
@@ -302,7 +307,7 @@ PaperBridge.Notifications = {
 
   showQueuedNotice(itemID, collectionID) {
     const item = Zotero.Items.get(itemID);
-    if (!item || !PaperBridge.Notes.isRegularItem(item)) {
+    if (!this.shouldAutoCreateForItem(item)) {
       return false;
     }
     const collectionIDs = this.collectionIDsForItem(item);
@@ -487,6 +492,50 @@ PaperBridge.Notifications = {
     }
     const allowed = PaperBridge.Settings.autoCreateOnlyCollections();
     return !allowed.length || PaperBridge.Settings.collectionNameMatches(collection.name, allowed);
+  },
+
+  shouldAutoCreateForItem(item) {
+    if (!item || !PaperBridge.Notes.isRegularItem(item) || item.deleted) {
+      return false;
+    }
+    const allowedTypes = PaperBridge.Settings.autoCreateItemTypes?.() || [];
+    if (!allowedTypes.length) {
+      return true;
+    }
+    return PaperBridge.Settings.itemTypeNameMatches(this.itemTypeNameForItem(item), allowedTypes);
+  },
+
+  itemTypeNameForItem(item) {
+    const candidates = [
+      item?.itemType,
+      item?.itemTypeName,
+      item?.type
+    ];
+    try {
+      if (typeof item?.getField === "function") {
+        candidates.push(item.getField("itemType"));
+      }
+    }
+    catch (error) {
+      PaperBridge.Util.safeLogError(error);
+    }
+    try {
+      if (item?.itemTypeID && typeof Zotero.ItemTypes?.getName === "function") {
+        candidates.push(Zotero.ItemTypes.getName(item.itemTypeID));
+      }
+    }
+    catch (error) {
+      PaperBridge.Util.safeLogError(error);
+    }
+    return candidates.find(value => String(value || "").trim()) || "";
+  },
+
+  autoCreateDelay(delay) {
+    if (delay !== null && delay !== undefined) {
+      const numericDelay = Number(delay);
+      return Number.isFinite(numericDelay) ? Math.max(0, numericDelay) : 3000;
+    }
+    return PaperBridge.Settings.autoCreateDelayMS?.() || 3000;
   },
 
   extractCollectionItemEvents(ids, extraData) {

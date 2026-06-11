@@ -129,6 +129,10 @@
 - 从 `0.1.31` 开始，右侧 PaperBridge 面板保存“简短说明”前会校验 Markdown frontmatter 归属；遇到缺失或残缺 frontmatter 时会先补齐 PaperBridge 必需字段再写入 `summary`，避免把旧笔记修成只有 `summary/updated` 的半残 frontmatter，也避免 stale index 读出其他条目的说明。
 - 从 `0.1.32` 开始，close-to-tray 不再监听 `beforeunload`，并且只拦截目标为 Zotero 顶层窗口、document 或 documentElement 的 `close` 事件；PDF reader、tab、弹窗或内部控件的 close/unload 事件会被放行，避免双击 PDF 或打开 reader 时误触发隐藏到托盘。
 - 从 `0.1.42` 开始，PaperBridge index 在运行期按原始 pref 字符串缓存，避免列渲染、面板和诊断反复 JSON.parse 同一份索引；外部 Markdown 文件监控从 8 秒强制刷新改为默认 30 秒按文件存在性/修改时间变化刷新，并为 frontmatter 校验缓存设置上限，降低大库空闲时 UI 刷新、文件检查和长期会话内存增长。
+- 从 `0.1.43` 开始，`Quit Zotero` 不再先关闭 tray helper。helper 会在发出 Zotero 退出请求后继续运行，直到确认所有 Zotero 进程消失；如果 Zotero 没退干净，helper 仍可恢复窗口。helper 也会在 Zotero 隐藏时检测新的 `zotero.exe` 进程并自动执行 `Open Zotero`，减少用户点击普通快捷方式却无法显示窗口的情况。
+- 从 `0.1.45` 开始，tray helper 不再由 Zotero 直接启动长期 PowerShell 控制台，而是通过 `wscript.exe` 无控制台宿主启动隐藏 PowerShell；回收站删除 Markdown 的短 PowerShell 调用也加入隐藏/非交互参数，避免出现空白终端窗口长期停留。
+- 从 `0.1.47` 开始，Zotero 启动后的保护期内 close-to-tray 会取消 `close` / `quit-application-requested` 但不执行隐藏。这样 Zotero 初始化或重建窗口时的内部关闭事件不会被误拦截成“隐藏到托盘”，也不会放任主窗口被关掉后留下后台 `zotero.exe` 无窗口状态。
+- 从 `0.1.48` 开始，tray helper 隐藏/恢复窗口时只操作真正的 Zotero 主窗口（`MozillaWindowClass` 且标题包含 `Zotero`），不再把 `Battery Watcher`、RemoteWindow、IME 等内部窗口一起隐藏，避免 helper `hide/show` 后主窗口无法恢复。
 
 ## Edge / Zotero Connector 保存分类
 
@@ -140,11 +144,14 @@
 
 - 这是 Zotero Connector 和 Zotero 主程序之间的保存流程，发生在 PaperBridge 自动创建 Markdown 之前。PaperBridge 只能在 Zotero item 已经创建、并收到 Zotero 的 item / collection-item 通知后处理 Markdown，不能拦截浏览器插件的“保存到哪个 Zotero collection”选择。
 - PaperBridge 在收到可靠的 `collection-item` 通知时会按该 collection 创建 Markdown；通知缺少 collection ID 时，会保守使用当前选中的 collection，但前提是该条目确实属于该 collection。这样做是为了避免把 Markdown 建到一个 Zotero item 实际不属于的目录。
+- 从 `0.1.44` 开始，PaperBridge 默认只对论文/文献型 Zotero 条目自动创建 Markdown，并跳过 `webpage` 等普通网页条目。像 Codeforces 题面这类误点保存的页面，Zotero Connector 仍可能创建 Zotero 条目，但 PaperBridge 不会继续自动生成 Markdown。
+- 从 `0.1.44` 开始，首次自动创建延迟默认为 8 秒，可在 PaperBridge 设置页调整为 3-60 秒。这个延迟不能阻止 Connector 保存条目，但能给用户更多时间在 Connector 面板或 Zotero 中确认/调整分类，减少误保存后立即创建本地文件的副作用。
 
 建议：
 
 - 保存前先在 Zotero 左侧选中目标 collection，再用 Connector 保存。
 - 如果 Connector 弹出保存面板，优先在 Connector 面板里选择目标 collection。
+- 如果经常误点浏览器扩展菜单中的 Zotero Connector，优先把 Connector 固定到浏览器工具栏；点击 Zotero Connector 图标本身就是保存动作，不是打开 PaperBridge 的预选择窗口。
 - 如果已经保存错 collection，先在 Zotero 中把 item 移动/加入目标 collection，再选中目标 collection 和 item，执行 `Tools` -> `PaperBridge` -> `PaperBridge: 移动笔记到当前分类`。
 
 ## Zotero 仍在运行旧包

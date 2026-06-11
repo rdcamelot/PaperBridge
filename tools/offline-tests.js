@@ -13,6 +13,8 @@ const prefs = new Map([
   ["extensions.paperbridge.fallbackCitekeyPattern", "{{firstCreator}}{{year}}_{{firstTitleWord}}"],
   ["extensions.paperbridge.autoCreateOnlyCollections", ""],
   ["extensions.paperbridge.autoCreateNotifications", true],
+  ["extensions.paperbridge.autoCreateDelaySeconds", 8],
+  ["extensions.paperbridge.autoCreateItemTypes", "journalArticle,conferencePaper,preprint,report,thesis,manuscript,book,bookSection,dataset,patent,presentation"],
   ["extensions.paperbridge.deleteMarkdownWithZoteroItem", true],
   ["extensions.paperbridge.externalFileMonitor", true],
   ["extensions.paperbridge.externalFileRefreshIntervalSeconds", 30],
@@ -715,6 +717,8 @@ const defaultPrefsSource = fs.readFileSync(path.join(root, "prefs.js"), "utf8");
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.markdownRoot"'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.closeToTray", true);'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.autoCreateNotifications", true);'));
+assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.autoCreateDelaySeconds", 8);'));
+assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.autoCreateItemTypes"'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.deleteMarkdownWithZoteroItem", true);'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.externalFileMonitor", true);'));
 assert.ok(defaultPrefsSource.includes('pref("extensions.paperbridge.externalFileRefreshIntervalSeconds", 30);'));
@@ -726,15 +730,39 @@ assert.ok(trayHelperSource.includes("PaperBridge:NOT_FOUND"));
 assert.ok(trayHelperSource.includes("$script:hiddenWindowHandles = @()"));
 assert.ok(trayHelperSource.includes("function Get-ZoteroProcesses"));
 assert.ok(trayHelperSource.includes("FindWindowsForProcess([int]$process.Id, [bool]$VisibleOnly)"));
+assert.ok(trayHelperSource.includes("GetWindowText"));
+assert.ok(trayHelperSource.includes("GetClassName"));
+assert.ok(trayHelperSource.includes("function Test-ZoteroMainWindow"));
+assert.ok(trayHelperSource.includes('$class -eq "MozillaWindowClass"'));
+assert.ok(trayHelperSource.includes('$title -like "*Zotero*"'));
+assert.ok(trayHelperSource.includes("function Get-ZoteroMainWindows"));
+assert.ok(trayHelperSource.includes("Get-ZoteroMainWindows -VisibleOnly"));
 assert.ok(trayHelperSource.includes("Treat hide as idempotent"));
-assert.ok(trayHelperSource.includes("$allWindows = @(Get-ZoteroWindows)"));
+assert.ok(trayHelperSource.includes("$allWindows = @(Get-ZoteroMainWindows)"));
 assert.ok(trayHelperSource.includes("@(Get-ZoteroProcesses).Count -eq 0"));
+assert.ok(trayHelperSource.includes("function Show-Zotero-When-NewProcessAppears"));
+assert.ok(trayHelperSource.includes("$script:knownZoteroProcessIDs"));
 assert.ok(trayHelperSource.includes('"hide" { return Hide-Zotero }'));
 assert.ok(trayHelperSource.includes('"show" { return Show-Zotero }'));
 assert.ok(trayHelperSource.includes('"quit-zotero" { return Request-Zotero-Quit }'));
 assert.ok(trayHelperSource.includes("Open Zotero"));
 assert.ok(trayHelperSource.includes("Quit Zotero"));
 assert.ok(!trayHelperSource.includes("Exit tray helper"));
+const helperQuitBody = trayHelperSource.match(/function Request-Zotero-Quit \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.ok(helperQuitBody.includes("PostMessage"));
+assert.ok(!helperQuitBody.includes("Stop-Helper"), "Quit Zotero should not stop the helper before Zotero really exits");
+const trayModuleSource = fs.readFileSync(path.join(root, "chrome/content/modules/tray.js"), "utf8");
+assert.ok(trayModuleSource.includes("C:\\\\Windows\\\\System32\\\\wscript.exe"));
+assert.ok(trayModuleSource.includes("paperbridge-start-tray-helper.vbs"));
+assert.ok(trayModuleSource.includes("shell.Run"));
+assert.ok(trayModuleSource.includes("-NonInteractive"));
+assert.ok(trayModuleSource.includes("-STA"));
+assert.ok(trayModuleSource.includes("-WindowStyle"));
+assert.ok(trayModuleSource.includes("Hidden"));
+const deleteQueueSource = fs.readFileSync(path.join(root, "chrome/content/modules/deleteQueue.js"), "utf8");
+assert.ok(deleteQueueSource.includes("-NonInteractive"));
+assert.ok(deleteQueueSource.includes("-WindowStyle"));
+assert.ok(deleteQueueSource.includes("Hidden"));
 const openZoteroLauncherSource = fs.readFileSync(path.join(root, "tools/open-zotero-paperbridge.ps1"), "utf8");
 assert.ok(openZoteroLauncherSource.includes("function Try-HelperShow"));
 assert.ok(openZoteroLauncherSource.includes("function Restore-ZoteroWindow"));
@@ -879,6 +907,16 @@ assert.strictEqual(PaperBridge.Settings.statusTagPrefix(), "paperbridge/status/"
 prefs.set("extensions.paperbridge.autoCreateNotifications", "false");
 assert.strictEqual(PaperBridge.Settings.autoCreateNotifications(), false);
 prefs.set("extensions.paperbridge.autoCreateNotifications", true);
+prefs.set("extensions.paperbridge.autoCreateDelaySeconds", 1);
+assert.strictEqual(PaperBridge.Settings.autoCreateDelayMS(), 3000);
+prefs.set("extensions.paperbridge.autoCreateDelaySeconds", 999);
+assert.strictEqual(PaperBridge.Settings.autoCreateDelayMS(), 60000);
+prefs.set("extensions.paperbridge.autoCreateDelaySeconds", 8);
+prefs.set("extensions.paperbridge.autoCreateItemTypes", " Journal Article ; pre_print\nconference-paper ");
+assert.deepStrictEqual(plain(PaperBridge.Settings.autoCreateItemTypes()), ["journalarticle", "preprint", "conferencepaper"]);
+assert.strictEqual(PaperBridge.Settings.itemTypeNameMatches("journalArticle", PaperBridge.Settings.autoCreateItemTypes()), true);
+assert.strictEqual(PaperBridge.Settings.itemTypeNameMatches("webpage", PaperBridge.Settings.autoCreateItemTypes()), false);
+prefs.set("extensions.paperbridge.autoCreateItemTypes", "journalArticle,conferencePaper,preprint,report,thesis,manuscript,book,bookSection,dataset,patent,presentation");
 prefs.set("extensions.paperbridge.deleteMarkdownWithZoteroItem", "false");
 assert.strictEqual(PaperBridge.Settings.deleteMarkdownWithZoteroItem(), false);
 prefs.set("extensions.paperbridge.deleteMarkdownWithZoteroItem", true);
@@ -900,6 +938,7 @@ const mockItem = {
   id: 42,
   key: "ABCD1234",
   libraryID: 1,
+  itemType: "journalArticle",
   firstCreator: "Doe",
   isRegularItem() {
     return true;
@@ -1177,6 +1216,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   PaperBridge.Tray.quitObserver = null;
   PaperBridge.Tray.start();
   assert.strictEqual(PaperBridge.Tray.allowQuit, false);
+  assert.ok(PaperBridge.Tray.interceptReadyTime > Date.now());
   assert.deepStrictEqual(observerRegistrations.map(entry => entry.topic), ["quit-application-requested"]);
   let trayClosePrevented = false;
   let trayCloseStopped = false;
@@ -1191,6 +1231,24 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     trayHideCalled = true;
   };
   PaperBridge.Tray.closeHidePromise = null;
+  PaperBridge.Tray.interceptReadyTime = Date.now() + 60000;
+  const startupCloseEvent = {
+    preventDefault() {
+      trayClosePrevented = true;
+    },
+    stopPropagation() {
+      trayCloseStopped = true;
+    }
+  };
+  PaperBridge.Tray.onClose(startupCloseEvent, {});
+  assert.strictEqual(PaperBridge.Tray.closeHidePromise, null);
+  assert.strictEqual(trayClosePrevented, true);
+  assert.strictEqual(trayCloseStopped, true);
+  assert.strictEqual(trayHideCalled, false);
+
+  trayClosePrevented = false;
+  trayCloseStopped = false;
+  PaperBridge.Tray.interceptReadyTime = Date.now() - 1;
   PaperBridge.Tray.onClose({
     preventDefault() {
       trayClosePrevented = true;
@@ -1289,6 +1347,7 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.deepStrictEqual(addedTrayEvents.map(event => event.type), ["close"]);
   PaperBridge.Tray.scheduleStartupRestore();
   assert.ok(PaperBridge.Tray.startupRestoreTimer);
+  PaperBridge.Tray.interceptReadyTime = Date.now() - 1;
   hookedWindow.close();
   await PaperBridge.Tray.closeHidePromise;
   assert.strictEqual(hookedHideCalls, 1);
@@ -1308,6 +1367,23 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
   assert.deepStrictEqual(removedTrayEvents.map(event => event.type), ["close"]);
   hookedWindow.close();
   assert.strictEqual(originalCloseCalls, 2);
+
+  const originalTrayStopForQuit = PaperBridge.Tray.stop;
+  let trayStopBeforeQuitCalled = false;
+  let quitZoteroWindowCalls = 0;
+  PaperBridge.Tray.stop = async () => {
+    trayStopBeforeQuitCalled = true;
+  };
+  await PaperBridge.Tray.quitZotero({
+    goQuitApplication() {
+      quitZoteroWindowCalls++;
+    }
+  });
+  assert.strictEqual(trayStopBeforeQuitCalled, false);
+  assert.strictEqual(quitZoteroWindowCalls, 1);
+  assert.strictEqual(PaperBridge.Tray.allowQuit, true);
+  PaperBridge.Tray.allowQuit = false;
+  PaperBridge.Tray.stop = originalTrayStopForQuit;
 
   PaperBridge.Tray.hideWindow = async () => {
     trayHideCalled = true;
@@ -3814,6 +3890,26 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
     }
   });
   zoteroItemsByID.set(502, notificationItem);
+  const webpageNotificationItem = Object.assign({}, notificationItem, {
+    id: 503,
+    key: "WEBPAGE1",
+    itemType: "webpage",
+    getField(field) {
+      return {
+        title: "Codeforces Round Problem",
+        date: "2026",
+        url: "https://codeforces.com/contest/2209/problem/C",
+        extra: ""
+      }[field] || "";
+    }
+  });
+  zoteroItemsByID.set(503, webpageNotificationItem);
+  assert.strictEqual(PaperBridge.Notifications.itemTypeNameForItem(webpageNotificationItem), "webpage");
+  assert.strictEqual(PaperBridge.Notifications.shouldAutoCreateForItem(notificationItem), true);
+  assert.strictEqual(PaperBridge.Notifications.shouldAutoCreateForItem(webpageNotificationItem), false);
+  prefs.set("extensions.paperbridge.autoCreateItemTypes", "");
+  assert.strictEqual(PaperBridge.Notifications.shouldAutoCreateForItem(webpageNotificationItem), true);
+  prefs.set("extensions.paperbridge.autoCreateItemTypes", "journalArticle,conferencePaper,preprint,report,thesis,manuscript,book,bookSection,dataset,patent,presentation");
   progressWindows.length = 0;
   PaperBridge.Notifications.noticeStates.clear();
   assert.strictEqual(PaperBridge.Notifications.showAutoCreateNotice(notificationItem, "complete", {
@@ -3852,9 +3948,16 @@ PaperBridge.Notes.filenameForItem(mockItem).then(async filename => {
 
   progressWindows.length = 0;
   PaperBridge.Notifications.noticeStates.clear();
+  PaperBridge.Notifications.scheduleItem(502, 7);
+  assert.deepStrictEqual(plain(PaperBridge.Notifications.pending.get(502)), { collectionID: 7 });
+  assert.strictEqual(progressWindows.length, 0);
   PaperBridge.Notifications.scheduleItem(502, 7, 3000);
   assert.strictEqual(progressWindows.length, 1);
   PaperBridge.Notifications.scheduleItem(502, 7, PaperBridge.Notifications.retryDelay);
+  assert.strictEqual(progressWindows.length, 1);
+
+  PaperBridge.Notifications.scheduleItem(503, 7, 3000);
+  assert.strictEqual(PaperBridge.Notifications.pending.has(503), false);
   assert.strictEqual(progressWindows.length, 1);
 
   PaperBridge.Notifications.scheduleItem(42, 7, 60000);

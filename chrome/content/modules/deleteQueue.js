@@ -188,7 +188,7 @@ PaperBridge.DeleteQueue = {
     ].join(" ");
     PaperBridge.Util.runProcess(
       powershell,
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", command],
       true
     );
   }

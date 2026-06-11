@@ -74,6 +74,21 @@
                   type="text"
                   data-l10n-id="paperbridge-pref-ignore-collections-input" />
 
+      <html:label for="paperbridge-auto-create-delay"
+                  data-l10n-id="paperbridge-pref-auto-create-delay"></html:label>
+      <html:input id="paperbridge-auto-create-delay"
+                  preference="extensions.paperbridge.autoCreateDelaySeconds"
+                  type="number"
+                  min="3"
+                  max="60" />
+
+      <html:label for="paperbridge-auto-create-item-types"
+                  data-l10n-id="paperbridge-pref-auto-create-item-types"></html:label>
+      <html:input id="paperbridge-auto-create-item-types"
+                  preference="extensions.paperbridge.autoCreateItemTypes"
+                  type="text"
+                  data-l10n-id="paperbridge-pref-auto-create-item-types-input" />
+
       <html:label for="paperbridge-external-file-refresh-interval"
                   data-l10n-id="paperbridge-pref-external-file-refresh-interval"></html:label>
       <html:input id="paperbridge-external-file-refresh-interval"

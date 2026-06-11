@@ -95,6 +95,10 @@ paperbridge-pref-auto-only-collections-input =
 paperbridge-pref-ignore-collections = 忽略的分类
 paperbridge-pref-ignore-collections-input =
     .placeholder = 这些分类永远不会自动创建 Markdown 笔记
+paperbridge-pref-auto-create-delay = 自动创建延迟（秒）
+paperbridge-pref-auto-create-item-types = 自动创建的条目类型
+paperbridge-pref-auto-create-item-types-input =
+    .placeholder = 留空表示所有普通条目类型；可用逗号、分号或换行分隔
 paperbridge-pref-external-file-refresh-interval = 外部文件检查间隔（秒）
 
 paperbridge-pref-section-tray = Windows 托盘
